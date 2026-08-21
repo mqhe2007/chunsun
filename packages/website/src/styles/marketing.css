@@ -1,0 +1,95 @@
+/**
+ * 营销站（首页 / 文档）专用样式：不依赖 daisyUI 组件 class。
+ * 控制台 / 认证 / 安装向导使用 `.app-ui` + daisyUI（见 style.css root 配置）。
+ */
+
+/* ── 站点按钮（替代 nav / hero 上的 btn btn-primary） ── */
+.site-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  min-height: 2.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.site-btn-lg {
+  min-height: 3rem;
+  padding: 0.65rem 1.35rem;
+  font-size: 1rem;
+  border-radius: 0.65rem;
+}
+
+.site-btn-ghost {
+  background: transparent;
+  color: var(--chunsun-ink);
+}
+
+.site-btn-ghost:hover {
+  background: color-mix(in srgb, var(--chunsun-ink) 7%, transparent);
+}
+
+.site-btn-primary {
+  background: var(--chunsun-shoot);
+  border-color: color-mix(in srgb, var(--chunsun-shoot) 85%, black);
+  color: #fff;
+}
+
+.site-btn-primary:hover {
+  background: var(--chunsun-node);
+  border-color: var(--chunsun-node);
+}
+
+.site-btn-primary:active {
+  transform: translateY(1px);
+}
+
+/* ── 进入动画（营销页） ── */
+@keyframes site-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes site-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.site-fade-in {
+  animation: site-fade-in 0.2s ease both;
+}
+
+.site-rise-in {
+  animation: site-rise-in 0.45s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-fade-in,
+  .site-rise-in {
+    animation: site-fade-in 0.01ms both;
+  }
+}

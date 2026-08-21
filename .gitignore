@@ -1,0 +1,36 @@
+node_modules/
+dist/
+.DS_Store
+/**/mcp.json
+
+# IDE / 工具产物
+.trae/
+.workbuddy/
+.cursor/
+.codewhale/
+.agents/
+
+# 本地数据库备份
+backups/
+
+# 本地开发 .env 不入库；模板见 .env.example（仅平台从源码启动）
+/.env
+/.env.development
+/.env.production
+
+# 平台实例配置（安装向导写入）
+chunsun.json
+**/chunsun.json.tmp
+
+# Rust 构建产物
+target/
+
+# 前端验收 / 本地临时产物
+packages/**/tmp/
+
+# 子包本地密钥文件
+/packages/backend/.env
+/packages/cli/.env
+
+# 本地内部备忘，不入库
+OPENSOURCE_PLAN.md

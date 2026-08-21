@@ -1,0 +1,132 @@
+@import "tailwindcss";
+@import "@chunsun/web-shared/tokens.css";
+
+/* daisyUI 仅作用于控制台 / 认证 / 安装等 .app-ui 容器 */
+@plugin "daisyui" {
+  themes: chunsun --default;
+  root: ".app-ui";
+}
+
+/*
+ * chunsun daisyUI 主题
+ * SSOT：@chunsun/web-shared/tokens.css（--chunsun-*）
+ * 规范：https://daisyui.com/docs/themes/
+ */
+@plugin "daisyui/theme" {
+  name: "chunsun";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+
+  /* base 表面 */
+  --color-base-100: var(--chunsun-fog);
+  --color-base-200: var(--chunsun-mist);
+  --color-base-300: var(--chunsun-line);
+  --color-base-content: var(--chunsun-ink);
+
+  /* brand */
+  --color-primary: var(--chunsun-shoot);
+  --color-primary-content: var(--chunsun-on-brand);
+  --color-secondary: var(--chunsun-node);
+  --color-secondary-content: var(--chunsun-on-brand);
+  --color-accent: var(--chunsun-tip);
+  --color-accent-content: var(--chunsun-ink);
+  --color-neutral: var(--chunsun-ink-muted);
+  --color-neutral-content: var(--chunsun-fog);
+
+  /* semantic */
+  --color-info: var(--chunsun-info);
+  --color-info-content: var(--chunsun-info-content);
+  --color-success: var(--chunsun-shoot);
+  --color-success-content: var(--chunsun-on-brand);
+  --color-warning: var(--chunsun-soil);
+  --color-warning-content: var(--chunsun-on-brand);
+  --color-error: var(--chunsun-danger);
+  --color-error-content: var(--chunsun-on-brand);
+
+  /* shape */
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+
+  /* effects */
+  --depth: 0;
+  --noise: 0;
+}
+
+/*
+ * 主题级组件定制
+ * https://daisyui.com/docs/themes/ 「How to add custom styles for a specific theme」
+ *
+ * daisyUI 默认交互态绑 base-content / currentColor（墨黑）：
+ * menu hover、btn-ghost hover、tabs-box 选中表面、megamenu 指示条。
+ * 无语义色的 ghost hover 用品牌色；btn-error 等交给 daisyUI --btn-color / currentColor。
+ */
+[data-theme="chunsun"] {
+  .menu {
+    --menu-active-bg: var(--color-primary);
+    --menu-active-fg: var(--color-primary-content);
+  }
+
+  .menu li > :not(.menu-active, .btn):is(:hover, :focus-visible, .menu-focus) {
+    background-color: color-mix(in oklab, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+  }
+
+  .tabs-border > .tab:is(.tab-active, [aria-selected="true"]) {
+    color: var(--color-primary);
+  }
+
+  .tabs-border > .tab:hover {
+    color: var(--color-primary);
+  }
+
+  .tabs-box > .tab:is(.tab-active, [aria-selected="true"]) {
+    background-color: color-mix(in oklab, var(--color-primary) 12%, var(--color-base-100));
+    color: var(--color-primary);
+  }
+
+  .tabs-box > .tab:hover {
+    color: var(--color-primary);
+  }
+
+  .megamenu-active {
+    background-color: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  }
+
+  .megamenu [popovertarget]:is(:hover, :focus-visible) {
+    color: var(--color-primary);
+  }
+
+  .btn-outline:not(
+    .btn-primary,
+    .btn-secondary,
+    .btn-accent,
+    .btn-info,
+    .btn-success,
+    .btn-warning,
+    .btn-error,
+    .btn-neutral
+  ) {
+    --btn-color: var(--color-primary);
+  }
+
+  .btn-ghost:not(
+    .btn-primary,
+    .btn-secondary,
+    .btn-accent,
+    .btn-info,
+    .btn-success,
+    .btn-warning,
+    .btn-error,
+    .btn-neutral
+  ):is(:hover, :focus-visible, :active, .btn-active) {
+    background-color: color-mix(in oklab, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+    --btn-border: #0000;
+    --btn-shadow: 0 0 0 0 oklch(0% 0 0 / 0);
+  }
+}

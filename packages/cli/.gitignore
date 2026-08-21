@@ -1,0 +1,16 @@
+# Rust
+/target/
+
+# output
+out
+dist
+*.tgz
+scripts/latest.json
+
+# dotenv（个人 SK 等，不提交）
+.env
+.env.local
+.env.*.local
+
+# Finder
+.DS_Store

@@ -1,0 +1,7 @@
+packages:
+  - packages/website
+  - packages/console
+  - packages/web-shared
+
+allowBuilds:
+  esbuild: true

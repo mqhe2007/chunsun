@@ -1,0 +1,61 @@
+/**
+ * 春笋 – 主题色 Token
+ *
+ * UI SSOT：docs/ui_design.md（Aura + green + olive）
+ * 仅保留颜色；字 / 圆角 / 阴影 / 间距 / 动效跟 Aura / 系统默认，不另建设计体系。
+ */
+:root {
+  /* 品牌三角 */
+  --chunsun-shoot: #16a34a; /* green.600 */
+  --chunsun-mist: #f2f4ee; /* olive.100 */
+  --chunsun-ink: #1e211a; /* olive.900 */
+
+  /* 派生（兼容现有 --chunsun-* 引用） */
+  --chunsun-tip: #4ade80; /* green.400 */
+  --chunsun-node: #15803d; /* green.700 */
+  --chunsun-fog: #fafbf8; /* olive.50 */
+  --chunsun-ink-muted: #575e4f; /* olive.600 */
+  --chunsun-rain: #767e6c; /* olive.500 */
+  --chunsun-soil: #6b5748; /* 语义 Warn */
+  --chunsun-line: #e4e7dc; /* olive.200，分隔线 / base-300 */
+  --chunsun-on-brand: #ffffff; /* 深色实色块上的前景 */
+  /* daisyUI info 实色：rain 过深，白字对比不足；浅橄榄底 + 墨字 */
+  --chunsun-info: color-mix(in srgb, var(--chunsun-rain) 38%, var(--chunsun-fog));
+  --chunsun-info-content: var(--chunsun-ink);
+
+  --chunsun-color-success-bg: color-mix(in srgb, var(--chunsun-tip) 18%, white);
+  --chunsun-color-success-border: color-mix(in srgb, var(--chunsun-shoot) 35%, white);
+  --chunsun-color-success-text: var(--chunsun-node);
+
+  --chunsun-color-warn-bg: color-mix(in srgb, var(--chunsun-soil) 12%, white);
+  --chunsun-color-warn-border: color-mix(in srgb, var(--chunsun-soil) 28%, white);
+  --chunsun-color-warn-text: var(--chunsun-soil);
+
+  --chunsun-color-danger-bg: #fdeceb;
+  --chunsun-color-danger-border: #f0c4c0;
+  --chunsun-color-danger-text: #9b3b34;
+  --chunsun-danger: var(--chunsun-color-danger-text); /* daisyUI error 实色 */
+
+  --chunsun-color-info-bg: color-mix(in srgb, var(--chunsun-rain) 12%, white);
+  --chunsun-color-info-border: color-mix(in srgb, var(--chunsun-rain) 28%, white);
+  --chunsun-color-info-text: var(--chunsun-rain);
+
+  --chunsun-code-bg: var(--chunsun-ink);
+  --chunsun-code-color: var(--chunsun-fog);
+}
+
+.site-theme {
+  color-scheme: light;
+
+  /* 营销页：表面出血，内容收栏 */
+  --site-rail-max: 1120px;
+  --site-rail-pad: 1.5rem;
+}
+
+.site-rail {
+  width: 100%;
+  max-width: var(--site-rail-max);
+  margin-inline: auto;
+  padding-inline: var(--site-rail-pad);
+  box-sizing: border-box;
+}

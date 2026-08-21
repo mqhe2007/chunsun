@@ -1,0 +1,22 @@
+{
+  "name": "chunsun",
+  "version": "0.4.5",
+  "private": true,
+  "license": "MIT",
+  "author": "孟庆贺 <122274389@qq.com>",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "node scripts/dev-web.mjs",
+    "be:dev": "PORT=${API_PORT:-11112} cargo run --manifest-path packages/backend/Cargo.toml",
+    "be:watch": "cargo watch -w packages/backend/src -x 'run --manifest-path packages/backend/Cargo.toml'",
+    "be:test": "cargo test --manifest-path packages/backend/Cargo.toml",
+    "fe:build": "pnpm --filter website build && pnpm --filter console build",
+    "fe:dev": "node scripts/dev-web.mjs",
+    "cli:dist": "bash scripts/build-cli-dist.sh",
+    "platform:release": "bash scripts/release-platform.sh",
+    "gen:permissions": "tsx scripts/gen-permissions.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

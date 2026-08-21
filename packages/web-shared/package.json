@@ -1,0 +1,13 @@
+{
+  "name": "@chunsun/web-shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./logoMarkPaths": "./src/logoMarkPaths.ts"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  }
+}
