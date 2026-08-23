@@ -22,6 +22,7 @@ import {
   Pause,
   RefreshCw,
   RotateCw,
+  Server,
   Shield,
   Sparkles,
   SquareCheck,
@@ -38,28 +39,40 @@ export type FeaturePoint = {
 /** 产品能力点（事实对齐 README + 长循环技能） */
 const features: FeaturePoint[] = [
   {
+    id: "self-host",
+    title: "自部署",
+    line: "单二进制 + PostgreSQL，数据与密钥留在你的实例。",
+    icon: Server,
+  },
+  {
+    id: "ssot",
+    title: "项目管理",
+    line: "需求、轮次、场景以平台为唯一真相源。",
+    icon: Monitor,
+  },
+  {
+    id: "handoff",
+    title: "跨时空同步",
+    line: "换人换会话，进度与决策链在平台无缝接上。",
+    icon: RefreshCw,
+  },
+  {
+    id: "agent",
+    title: "多 Agent 接入",
+    line: "chunsun init 按 IDE 装好技能、命令与规则。",
+    icon: Link,
+  },
+  {
     id: "autonomous",
     title: "自主交付",
     line: "一条 /chunsun，Agent 自主推进到验收绿。",
     icon: Zap,
   },
   {
-    id: "agent",
-    title: "Agent 接入",
-    line: "chunsun init 按 IDE 装好技能、命令与规则。",
-    icon: Link,
-  },
-  {
     id: "memory",
     title: "工作记忆",
     line: "快照与决策留在平台，换会话也能续。",
     icon: Database,
-  },
-  {
-    id: "ssot",
-    title: "平台 SSOT",
-    line: "需求、Run、场景以平台为唯一真相源。",
-    icon: Monitor,
   },
   {
     id: "scenario",
@@ -96,12 +109,6 @@ const features: FeaturePoint[] = [
     title: "三种停点",
     line: "验收绿、需决策、用户打断——只在此停。",
     icon: Pause,
-  },
-  {
-    id: "handoff",
-    title: "跨 Agent 续跑",
-    line: "换人换助手，进度与决策链可无缝接上。",
-    icon: RefreshCw,
   },
   {
     id: "rri",

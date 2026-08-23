@@ -1,4 +1,10 @@
 <p align="center">
+  <a href="https://chunsun.mengqinghe.com/">
+    <img src="./social-preview.png" alt="春笋 ChunSun - 自部署的 AI 项目管理平台" width="100%" />
+  </a>
+</p>
+
+<p align="center">
   <img src="./logo.svg" alt="春笋 chunsun" width="120" />
 </p>
 
@@ -8,31 +14,40 @@
   <img alt="lang" src="https://img.shields.io/badge/lang-Rust%20%2F%20Vue-0F6E56" />
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%2F%20Linux%20%2F%20Windows-0F6E56" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green" />
+  <a href="https://chunsun.mengqinghe.com/"><img alt="demo" src="https://img.shields.io/badge/demo-chunsun.mengqinghe.com-0F6E56" /></a>
 </p>
 
 <p align="center" style="font-size: 18px;">- 竹林细雨落，春笋破土出 -</p>
 
-春笋 · ChunSun 是一个 AI 原生的项目交付平台。它以「需求」为唯一工作对象，平台作为配置与工作流状态的唯一真相源，本地仓库仅负责执行与跑测。不绑定 Agent，通过 `chunsun init` 支持多种主流 Agent 一键接入。在 Agent 中输入 `/chunsun <需求ID>`，Agent 便自主推进实施、上报进度、维护验收场景与用例、更新可跨会话续跑的工作记忆，直到验收全绿交付。
+**自部署的 AI 原生项目管理平台**——需求、验收、进度留在你的实例上，跨会话、跨用户、跨 Agent 同步续跑。在 Agent 中输入 `/chunsun <需求ID>`，Agent 便自主推进实施、上报进度、维护验收场景与用例，直到验收全绿交付。
 
-## ✨ 为什么是春笋
+## 核心卖点
 
-- 🎯 自主交付 —— Agent 自主决策工作流，一条命令进入实施 / 询问/ 迭代，跨会话、跨用户、跨 Agent 皆可续跑。
+- **自部署** —— 单二进制平台，PostgreSQL 即可运行；数据与密钥留在你的实例。
+- **项目管理** —— 以需求为唯一工作对象，轮次、验收场景、缺陷闭环统一收口。
+- **跨时空状态同步** —— 进度、决策、工作记忆在平台留存；换会话、换人、换 Agent 可续跑。
+- **多 Agent 支持** —— Cursor、Claude Code 等 8+ IDE，`chunsun init` 一键接入。
 
-- 🧬 信任 AI —— 避免过度干涉 AI，给 AI 自主决策权。
+> 此外还支持：团队密钥（Secret-safe）、双轨 RBAC、真实依赖验收、缺陷闭环等能力。
 
-- 🧠 需求级工作记忆 —— 每个需求自带跨会话留存的大脑（快照 / 决策 / 代码地标），平台为 SSOT、CLI 增量维护。
+## 痛点与方案
 
-- 🐛 缺陷闭环 —— 平台支持缺陷管理，`/chunsun-fix` 一键派生修复需求并回链，需求完成即缺陷修复。
+| 痛点 | 春笋方案 |
+|------|----------|
+| **AI 聊完就忘** —— 昨天 Cursor 里推进的需求，今天新开对话要从零解释 | 需求级工作记忆在平台，任意会话 `/chunsun` 续跑 |
+| **Issue 看板管不住交付** —— Jira/Linear 记状态，Agent 实际改了什么、验收过没过，对不上 | 验收场景 / 用例 / 轮次步骤都在平台，SSOT 收口 |
+| **被单一 Agent 绑定** —— 团队有人用 Cursor、有人用 Claude Code，工具链各搞一套 | `chunsun init` 按 IDE 装技能，同一平台管所有 Agent 的交付 |
 
-- 🔌 Agent 无关 —— 支持多种主流 Agent，`chunsun init` 按所选 Agent 安装 Agent 能力。
+## 快速体验
 
-- 🔐 团队共享环境变量（Secret-safe） —— 密钥平台登记、加密存储、CLI 实时拉取使用。
+在线 Demo：[https://chunsun.mengqinghe.com/](https://chunsun.mengqinghe.com/)
 
-- 🛡️ 双轨 RBAC，三档权限矩阵 —— 平台角色 + 项目成员角色双轨认证。
+- 访客可直接浏览官网与控制台界面
+- 注册账号后可创建项目、接入 CLI、跑通第一次 `/chunsun`
 
-## 🚀 快速开始
+## 快速开始
 
-> **前置条件**：已有可访问的春笋实例（官方或自建）
+> **前置条件**：已有可访问的春笋实例（[在线 Demo](https://chunsun.mengqinghe.com/) 或自建）
 >
 > **自建**：准备 PostgreSQL → 构建平台二进制 → 运行后打开 `/console/setup` 完成安装向导。配置写入程序同级的 `chunsun.json`。
 
@@ -86,7 +101,7 @@ chunsun init         # 校验密钥 → 绑定仓库 → 按所选 Agent 安装�
 
 Agent 会自动开始实施、上报进度、维护验收场景、用例、更新工作记忆——直到场景全绿。
 
-## 🛠️ 本地开发
+## 本地开发
 
 ```bash
 cp .env.example .env   # 填写 DATABASE_URL、JWT_SECRET
@@ -96,7 +111,7 @@ pnpm dev               # 网关 :11111 + 官网/控制台 Vite + 后端 :11112�
 
 浏览器入口固定 http://127.0.0.1:11111
 
-## 🏗️ 工作原理
+## 工作原理
 
 ```mermaid
 flowchart LR
@@ -119,7 +134,7 @@ flowchart LR
 
 平台是配置与工作流状态的**唯一真相源**；本地仓库只负责执行与跑测。
 
-## 🛠️ CLI 命令一览
+## CLI 命令一览
 
 ```txt
 chunsun init                  # 一键接入：绑定仓库 + 安装 Agent 能力
@@ -137,7 +152,9 @@ chunsun update                # 向实例查询版本并升级 CLI
 chunsun update --check        # 仅对比版本，不下载
 ```
 
-## 🤝 贡献
+## 贡献
+
+没有实例？先访问 [在线 Demo](https://chunsun.mengqinghe.com/) 体验，或按上文「自建部署」在本地跑起来。
 
 本项目以 **MIT License** 开源，源码可自由 fork、修改与自用。
 
@@ -147,6 +164,6 @@ chunsun update --check        # 仅对比版本，不下载
 
 如需申请**官方托管实例**的使用权限：创建一个 Issue 发起贡献申请并留下邮箱；审核通过后会开通平台账号并通过邮件通知。
 
-## 📄 许可证
+## 许可证
 
-本项目以 **MIT License** 开源，任何人可自由使用、复制、修改、分发（含商业用途）。完整条款见 [LICENSE](./LICENSE)。
+本项目以 **MIT License** 开源，任何人可自由使用、复制、修改、分发（含商业用途）。完整条款见 [LICENSE](./LICENSE).

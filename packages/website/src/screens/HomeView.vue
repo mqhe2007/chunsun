@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, CornerDownLeft } from "@lucide/vue";
+import { ArrowRight, Check, CornerDownLeft } from "@lucide/vue";
 import { useTemplateRef, ref, computed, nextTick, onMounted, onBeforeUnmount } from "vue";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -16,6 +16,27 @@ useLandingReveal(pageRoot);
 const appVersion = __APP_VERSION__;
 const GITHUB_URL = "https://github.com/mqhe2007/chunsun";
 const LICENSE_URL = `${GITHUB_URL}/blob/main/LICENSE`;
+
+const painCards = [
+  {
+    id: "forget",
+    pain: "AI 聊完就忘",
+    detail: "昨天 Cursor 里推进的需求，今天新开对话要从零解释。",
+    solution: "需求级工作记忆在平台，任意会话 /chunsun 续跑。",
+  },
+  {
+    id: "board",
+    pain: "Issue 看板管不住交付",
+    detail: "Jira / Linear 记状态，Agent 实际改了什么、验收过没过，对不上。",
+    solution: "验收场景、用例、轮次步骤都在平台，SSOT 收口。",
+  },
+  {
+    id: "agent-lock",
+    pain: "被单一 Agent 绑定",
+    detail: "团队有人用 Cursor、有人用 Claude Code，工具链各搞一套。",
+    solution: "chunsun init 按 IDE 装技能，同一平台管所有 Agent 的交付。",
+  },
+] as const;
 
 function goToRegister() {
   location.assign("/console/auth/register");
@@ -408,9 +429,9 @@ onBeforeUnmount(() => {
               <span class="hero-brand-name">春笋</span>
             </p>
 
-            <h1 class="hero-title">竹林细雨落，春笋破土出</h1>
+            <h1 class="hero-title">自部署的 AI 项目管理平台</h1>
             <p class="hero-subtitle">
-              灵感如细雨落下，春笋破土，无限生长。
+              需求、验收、进度留在你的实例；跨会话、跨 Agent 续跑。
             </p>
 
             <div class="hero-actions">
@@ -423,6 +444,36 @@ onBeforeUnmount(() => {
           <div class="hero-visual" aria-hidden="true">
             <HeroBambooScene />
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 痛点与方案 ── -->
+    <section id="pain" class="pain" aria-labelledby="pain-title">
+      <div class="site-rail pain-rail" data-reveal>
+        <header class="pain-head">
+          <p class="eyebrow">为什么需要春笋</p>
+          <h2 id="pain-title" class="section-title">不是让 AI 写更多代码</h2>
+          <p class="section-lead">
+            而是让交付过程可续跑、可验收、自部署。
+          </p>
+        </header>
+
+        <div class="pain-grid">
+          <article v-for="card in painCards" :key="card.id" class="pain-card">
+            <div class="pain-card-side pain-card-side--problem">
+              <p class="pain-card-label">痛点</p>
+              <h3 class="pain-card-title">{{ card.pain }}</h3>
+              <p class="pain-card-detail">{{ card.detail }}</p>
+            </div>
+            <div class="pain-card-bridge" aria-hidden="true">
+              <ArrowRight class="pain-card-arrow" :size="20" />
+            </div>
+            <div class="pain-card-side pain-card-side--solution">
+              <p class="pain-card-label">春笋</p>
+              <p class="pain-card-solution">{{ card.solution }}</p>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -456,7 +507,7 @@ onBeforeUnmount(() => {
     <section id="console" class="console" aria-labelledby="console-title">
       <div class="site-rail console-rail" data-reveal>
         <header class="console-head">
-          <p class="eyebrow">开始生长</p>
+          <p class="eyebrow">跨时空续跑</p>
           <h2 id="console-title" class="section-title">一条斜线命令，自主推进</h2>
           <p class="section-lead">
             Agent 连续决策与验收，直到场景全绿。
@@ -522,7 +573,7 @@ onBeforeUnmount(() => {
           <p class="eyebrow">持续生长</p>
           <h2 id="bento-title" class="section-title">春笋能力</h2>
           <p class="section-lead">
-            接入、记忆、验收、密钥、权限、缺陷闭环……春笋也在持续生长，不止于此。
+            自部署在你手里，多 Agent 一键接入；记忆、验收、密钥、权限、缺陷闭环……春笋也在持续生长。
           </p>
         </header>
       </div>
@@ -538,7 +589,7 @@ onBeforeUnmount(() => {
           <div class="site-rail journey-rail">
             <div class="journey-aside">
               <header class="journey-head">
-                <p class="journey-eyebrow">跨会话和用户统一生命周期</p>
+                <p class="journey-eyebrow">项目管理 · 一条需求的完整生命周期</p>
                 <h2 id="journey-title" class="section-title journey-title">一条需求的旅程</h2>
               </header>
               <nav class="journey-nav" aria-label="需求旅程步骤">
@@ -760,6 +811,105 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 0.5rem;
+}
+
+/* ── 痛点与方案 ─────────────────────────────── */
+.pain {
+  padding-block: clamp(3.5rem, 9vh, 5.5rem);
+  background:
+    linear-gradient(180deg, var(--chunsun-fog) 0%, var(--chunsun-mist) 100%);
+}
+
+.pain-rail {
+  display: grid;
+  gap: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.pain-head {
+  max-width: 44rem;
+}
+
+.pain-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.pain-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: stretch;
+  padding: clamp(1rem, 2.5vw, 1.35rem);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--chunsun-fog) 88%, white);
+  border: 1px solid color-mix(in srgb, var(--chunsun-shoot) 14%, transparent);
+  box-shadow: 0 18px 40px -32px color-mix(in srgb, var(--chunsun-ink) 35%, transparent);
+}
+
+.pain-card-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.pain-card-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--chunsun-ink-muted);
+}
+
+.pain-card-title {
+  margin: 0;
+  font-size: clamp(1.05rem, 2vw, 1.2rem);
+  font-weight: 700;
+  color: var(--chunsun-ink);
+  line-height: 1.35;
+}
+
+.pain-card-detail,
+.pain-card-solution {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--chunsun-ink-muted);
+}
+
+.pain-card-side--solution {
+  position: relative;
+  padding-inline-start: 0.25rem;
+}
+
+.pain-card-solution {
+  color: var(--chunsun-node);
+  font-weight: 500;
+}
+
+.pain-card-bridge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chunsun-shoot) 12%, transparent);
+  color: var(--chunsun-shoot);
+}
+
+@media (max-width: 760px) {
+  .pain-card {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+  }
+
+  .pain-card-bridge {
+    justify-self: start;
+    transform: rotate(90deg);
+  }
 }
 
 .hero-visual {

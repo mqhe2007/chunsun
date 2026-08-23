@@ -44,11 +44,16 @@ export const docCategories: DocCategory[] = [
         slug: "overview",
         title: "快速开始",
         icon: "compass",
-        desc: "春笋是什么，一条需求如何被自主交付。",
+        desc: "春笋是什么，四大卖点与第一次自主交付。",
         blocks: [
           {
             t: "p",
-            text: "春笋是 AI 原生的项目交付平台。它以「需求」为唯一工作对象，平台保存需求、轮次、步骤、验收场景与工作记忆；本地仓库只负责执行与跑测。在 Agent 中输入 /chunsun <需求ID>，Agent 便会自主推进实施、上报进度、维护验收场景与用例，直到验收全绿交付。",
+            text: "春笋是自部署的 AI 原生项目管理平台。需求、验收、进度留在你的实例上，跨会话、跨用户、跨 Agent 同步续跑。它以「需求」为唯一工作对象，平台保存需求、轮次、步骤、验收场景与工作记忆；本地仓库只负责执行与跑测。在 Agent 中输入 /chunsun <需求ID>，Agent 便会自主推进实施、上报进度、维护验收场景与用例，直到验收全绿交付。",
+          },
+          {
+            t: "note",
+            kind: "info",
+            text: "在线 Demo：https://chunsun.mengqinghe.com/ —— 访客可直接浏览官网与控制台，注册后可创建项目并跑通第一次 /chunsun。",
           },
           {
             t: "h2",
@@ -68,6 +73,19 @@ export const docCategories: DocCategory[] = [
             t: "note",
             kind: "info",
             text: "全程无需手工拆任务：Agent 自主决策下一步，你只在「需要决策」「验收未通过」「主动打断」三个停点介入。",
+          },
+          {
+            t: "h2",
+            text: "核心卖点",
+          },
+          {
+            t: "ul",
+            items: [
+              "自部署：单二进制平台 + PostgreSQL，数据与密钥留在你的实例。",
+              "项目管理：需求、轮次、验收场景、缺陷闭环统一收口，平台为唯一真相源。",
+              "跨时空状态同步：进度、决策、工作记忆在平台留存，换会话、换人、换 Agent 可续跑。",
+              "多 Agent 支持：Cursor、Claude Code 等 8+ IDE，chunsun init 一键接入。",
+            ],
           },
           {
             t: "h2",
