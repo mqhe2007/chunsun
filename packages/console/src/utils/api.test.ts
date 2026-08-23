@@ -120,4 +120,14 @@ describe("api response interceptor", () => {
     expect(toastWarn).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();
   });
+
+  test("registration-config 公开路由不附加 Authorization", async () => {
+    localStorage.setItem("token", "fake");
+    const fulfilled = api.interceptors.request.handlers[0].fulfilled!;
+    const result = await fulfilled({
+      url: "/auth/registration-config",
+      headers: {} as import("axios").AxiosRequestHeaders,
+    });
+    expect(result.headers.Authorization).toBeUndefined();
+  });
 });

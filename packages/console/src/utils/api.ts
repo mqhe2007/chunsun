@@ -16,6 +16,7 @@ function isPublicApiUrl(url: string | undefined) {
   return (
     url.includes("/auth/login") ||
     url.includes("/auth/register") ||
+    url.includes("/auth/registration-config") ||
     url.includes("/auth/verify-email") ||
     url.includes("/auth/resend-verification") ||
     url.includes("/auth/forgot-password") ||

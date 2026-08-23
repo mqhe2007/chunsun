@@ -15,6 +15,7 @@ use crate::api::{ok, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
 use crate::repos::project;
 use crate::services::auth as auth_service;
+use crate::services::settings;
 use crate::state::AppState;
 
 /// 长度/格式校验，对齐 Elysia 的 `t.String({ minLength, maxLength, format: "email" })`。
@@ -74,6 +75,13 @@ pub struct EmailBody {
 pub struct ResetPasswordBody {
     pub token: String,
     pub new_password: String,
+}
+
+async fn registration_config(
+    State(state): State<AppState>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let invite_only = settings::is_invite_only_registration(&state.pool()).await?;
+    Ok(ok(json!({ "inviteOnly": invite_only })))
 }
 
 async fn register(
@@ -187,6 +195,7 @@ async fn secret_key_info(
 pub fn router(state: AppState) -> Router<AppState> {
     // 公开组：严格限流
     let public = Router::new()
+        .route("/registration-config", get(registration_config))
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/verify-email", post(verify_email))

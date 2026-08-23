@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Mail } from "@lucide/vue";
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useField, useForm } from "vee-validate";
 import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/stores/auth";
 import { AppAlert, AppField, PasswordInput, useToast } from "@/ui";
+import { api } from "@/utils/api";
 
 const route = useRoute();
 const router = useRouter();
@@ -17,23 +18,29 @@ const registeredEmail = ref("");
 const registered = ref(false);
 const loading = ref(false);
 const submitError = ref("");
+const configLoading = ref(true);
+const inviteOnly = ref(false);
 
-const schema = toTypedSchema(
-  z
-    .object({
-      email: z.string().email("请输入有效邮箱").max(100, "邮箱过长"),
-      password: z.string().min(6, "密码至少 6 位").max(100, "密码过长"),
-      confirmPassword: z.string().min(1, "请确认密码"),
-      inviteCode: z.string().optional(),
-      nickname: z.string().max(50, "昵称过长").optional(),
-    })
-    .refine(data => data.password === data.confirmPassword, {
-      message: "两次输入的密码不一致",
-      path: ["confirmPassword"],
-    }),
+const schema = computed(() =>
+  toTypedSchema(
+    z
+      .object({
+        email: z.string().email("请输入有效邮箱").max(100, "邮箱过长"),
+        password: z.string().min(6, "密码至少 6 位").max(100, "密码过长"),
+        confirmPassword: z.string().min(1, "请确认密码"),
+        inviteCode: inviteOnly.value
+          ? z.string().min(1, "请输入邀请码").max(64, "邀请码过长")
+          : z.string().max(64, "邀请码过长").optional(),
+        nickname: z.string().max(50, "昵称过长").optional(),
+      })
+      .refine(data => data.password === data.confirmPassword, {
+        message: "两次输入的密码不一致",
+        path: ["confirmPassword"],
+      }),
+  ),
 );
 
-const { handleSubmit } = useForm({
+const { handleSubmit, resetForm } = useForm({
   validationSchema: schema,
   initialValues: {
     email: "",
@@ -51,6 +58,28 @@ const { value: confirmPassword, errorMessage: confirmPasswordError } =
 const { value: inviteCode, errorMessage: inviteCodeError } = useField<string>("inviteCode");
 const { value: nickname, errorMessage: nicknameError } = useField<string>("nickname");
 
+onMounted(async () => {
+  try {
+    const { data } = await api.get<{ success: boolean; data: { inviteOnly: boolean } }>(
+      "/auth/registration-config",
+    );
+    inviteOnly.value = data.data.inviteOnly;
+    resetForm({
+      values: {
+        email: "",
+        password: "",
+        confirmPassword: "",
+        inviteCode: inviteOnly.value ? (route.query.code as string) || "" : "",
+        nickname: "",
+      },
+    });
+  } catch {
+    submitError.value = "无法加载注册配置，请刷新重试";
+  } finally {
+    configLoading.value = false;
+  }
+});
+
 const onSubmit = handleSubmit(async values => {
   loading.value = true;
   submitError.value = "";
@@ -58,7 +87,7 @@ const onSubmit = handleSubmit(async values => {
     const result = await auth.register({
       email: values.email,
       password: values.password,
-      inviteCode: values.inviteCode || undefined,
+      inviteCode: inviteOnly.value ? values.inviteCode || undefined : undefined,
       nickname: values.nickname || undefined,
     });
     registeredEmail.value = result.email;
@@ -73,9 +102,7 @@ const onSubmit = handleSubmit(async values => {
 async function resendEmail() {
   if (!registeredEmail.value) return;
   try {
-    await import("@/utils/api").then(({ api }) =>
-      api.post("/auth/resend-verification", { email: registeredEmail.value }),
-    );
+    await api.post("/auth/resend-verification", { email: registeredEmail.value });
     toast.success("已发送", "验证邮件已重新发送，请查收");
   } catch {
     toast.error("发送失败", "请稍后重试");
@@ -102,8 +129,14 @@ async function resendEmail() {
     </div>
   </div>
 
+  <div v-else-if="configLoading" class="auth-form">
+    <span class="loading loading-spinner loading-md mx-auto" />
+  </div>
+
   <form v-else class="auth-form" @submit.prevent="onSubmit">
-    <AppAlert severity="warning">当前仅支持邀请注册，请填写有效邀请码。</AppAlert>
+    <AppAlert v-if="inviteOnly" severity="warning">
+      当前仅支持邀请注册，请填写有效邀请码。
+    </AppAlert>
 
     <AppField label="邮箱" html-for="register-email" :error="emailError">
       <input
@@ -128,7 +161,12 @@ async function resendEmail() {
       />
     </AppField>
 
-    <AppField label="邀请码" html-for="register-invite-code" :error="inviteCodeError">
+    <AppField
+      v-if="inviteOnly"
+      label="邀请码"
+      html-for="register-invite-code"
+      :error="inviteCodeError"
+    >
       <input
         id="register-invite-code"
         v-model="inviteCode"
