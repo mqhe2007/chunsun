@@ -1,5 +1,5 @@
-//! 邮件服务（对齐 `emailService.ts`）：SMTP 未配置时不抛错，记 EmailLog 失败后继续。
-//! 测试发信走 `try_send_email`，把成败回传给调用方。
+//! 邮件服务：`try_send_email` 把成败回传；认证域验证/重置邮件走它并向上抛。
+//! 站内通知等非关键路径仍可用 `send_email` 静默吞错。
 
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
@@ -205,9 +205,14 @@ pub async fn send_test_email(pool: &PgPool, to: &str) -> Result<(), AppError> {
     .map_err(|e| AppError::bad_request("EMAIL_SEND_FAILED").with_message(e))
 }
 
-pub async fn send_verification_email(pool: &PgPool, to: &str, token: &str, origin: &str) {
+pub async fn send_verification_email(
+    pool: &PgPool,
+    to: &str,
+    token: &str,
+    origin: &str,
+) -> Result<(), AppError> {
     let verify_url = format!("{origin}/console/auth/verify-email?token={token}");
-    send_email(
+    try_send_email(
         pool,
         EmailOptions {
             to: to.to_string(),
@@ -218,12 +223,18 @@ pub async fn send_verification_email(pool: &PgPool, to: &str, token: &str, origi
             ),
         },
     )
-    .await;
+    .await
+    .map_err(|e| AppError::bad_request("EMAIL_SEND_FAILED").with_message(e))
 }
 
-pub async fn send_password_reset_email(pool: &PgPool, to: &str, token: &str, origin: &str) {
+pub async fn send_password_reset_email(
+    pool: &PgPool,
+    to: &str,
+    token: &str,
+    origin: &str,
+) -> Result<(), AppError> {
     let reset_url = format!("{origin}/console/auth/reset-password?token={token}");
-    send_email(
+    try_send_email(
         pool,
         EmailOptions {
             to: to.to_string(),
@@ -234,7 +245,8 @@ pub async fn send_password_reset_email(pool: &PgPool, to: &str, token: &str, ori
             ),
         },
     )
-    .await;
+    .await
+    .map_err(|e| AppError::bad_request("EMAIL_SEND_FAILED").with_message(e))
 }
 
 /// 项目邀请等站内通知邮件：对齐旧后端 `sendNotificationEmail(...).catch(()=>{})`，

@@ -127,6 +127,7 @@ fn user_admin(u: &User) -> serde_json::Value {
         "nickname": u.nickname,
         "role": u.role,
         "status": u.status,
+        "emailVerified": u.email_verified,
         "createdAt": dt_value(&u.created_at),
         "updatedAt": dt_value(&u.updated_at),
     })

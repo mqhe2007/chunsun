@@ -22,6 +22,7 @@ type AuthErrorCode =
   | "INVALID_INVITE_CODE"
   | "WEAK_PASSWORD"
   | "EMAIL_NOT_VERIFIED"
+  | "EMAIL_SEND_FAILED"
   | "ACCOUNT_INACTIVE"
   | "ACCOUNT_LOCKED"
   | "INVALID_OR_EXPIRED_TOKEN"
@@ -53,6 +54,8 @@ const mapAuthError = (
       return "密码强度不足";
     case "EMAIL_NOT_VERIFIED":
       return "邮箱尚未验证，请查收验证邮件";
+    case "EMAIL_SEND_FAILED":
+      return "验证邮件发送失败，请检查邮箱或稍后重试";
     case "ACCOUNT_INACTIVE":
       return "账户已被停用";
     case "ACCOUNT_LOCKED":
@@ -68,8 +71,8 @@ const mapAuthError = (
 
 const getAuthFailureMessage = (error: unknown, fallback: string): string => {
   const code = getErrorCode(error);
-  if (code === "WEAK_PASSWORD") {
-    return getErrorMessage(error) || "密码强度不足";
+  if (code === "WEAK_PASSWORD" || code === "EMAIL_SEND_FAILED") {
+    return getErrorMessage(error) || mapAuthError(code, fallback);
   }
   if (code) return mapAuthError(code, fallback);
 

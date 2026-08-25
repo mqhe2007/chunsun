@@ -136,7 +136,13 @@ pub async fn admin_create(
     )
     .await
     {
-        Ok(created) => Ok(created),
+        Ok(created) => {
+            // 管理员手工建号视为已验证，否则无法登录（EMAIL_NOT_VERIFIED）。
+            user::update_user_email_verified(pool, &created.id, true).await?;
+            user::get_user_by_id(pool, &created.id)
+                .await?
+                .ok_or_else(|| AppError::from(UserFailure::UserNotFound))
+        }
         Err(e) => {
             let is_dup = matches!(e, sqlx::Error::Database(ref d) if d.is_unique_violation());
             if is_dup {

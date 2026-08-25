@@ -32,8 +32,11 @@ const onSubmit = handleSubmit(async values => {
   try {
     await api.post("/auth/forgot-password", { email: values.email });
     submitted.value = true;
-  } catch {
-    submitError.value = "提交失败，请稍后重试";
+  } catch (error) {
+    const message =
+      (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+      "提交失败，请稍后重试";
+    submitError.value = message;
   } finally {
     loading.value = false;
   }

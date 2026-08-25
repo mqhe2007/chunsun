@@ -21,6 +21,7 @@ type UserItem = {
   qq: string | null;
   role: "ADMIN" | "USER";
   status: "ACTIVE" | "INACTIVE" | "LOCKED";
+  emailVerified: boolean;
   createdAt: string;
 };
 
@@ -65,15 +66,25 @@ function roleBadgeClass(role: UserItem["role"]) {
   return role === "ADMIN" ? "badge-warning" : "badge-info";
 }
 
-function statusBadgeClass(status: UserItem["status"]) {
-  if (status === "ACTIVE") return "badge-success";
-  if (status === "LOCKED") return "badge-error";
+/** 展示态：账户 status 与邮箱验证分开存，未验证时 ACTIVE 应对用户显示「未激活」。 */
+function displayStatus(user: UserItem): "ACTIVE" | "INACTIVE" | "LOCKED" | "UNVERIFIED" {
+  if (user.status === "ACTIVE" && user.emailVerified === false) return "UNVERIFIED";
+  return user.status;
+}
+
+function statusBadgeClass(user: UserItem) {
+  const s = displayStatus(user);
+  if (s === "ACTIVE") return "badge-success";
+  if (s === "UNVERIFIED") return "badge-warning";
+  if (s === "LOCKED") return "badge-error";
   return "badge-ghost";
 }
 
-function statusLabel(status: UserItem["status"]) {
-  if (status === "ACTIVE") return "正常";
-  if (status === "INACTIVE") return "禁用";
+function statusLabel(user: UserItem) {
+  const s = displayStatus(user);
+  if (s === "ACTIVE") return "正常";
+  if (s === "UNVERIFIED") return "未激活";
+  if (s === "INACTIVE") return "禁用";
   return "已锁定";
 }
 
@@ -198,17 +209,17 @@ onMounted(fetchUsers);
       <AppColumn header="邮箱">
         <template #default="{ row }">{{ (row as UserItem).email }}</template>
       </AppColumn>
-      <AppColumn header="角色" width="100px">
+      <AppColumn header="角色" width="7.5rem">
         <template #default="{ row }">
-          <span class="badge" :class="roleBadgeClass((row as UserItem).role)">
+          <span class="badge whitespace-nowrap" :class="roleBadgeClass((row as UserItem).role)">
             {{ (row as UserItem).role === "ADMIN" ? "管理员" : "普通用户" }}
           </span>
         </template>
       </AppColumn>
-      <AppColumn header="状态" width="100px">
+      <AppColumn header="状态" width="6rem">
         <template #default="{ row }">
-          <span class="badge" :class="statusBadgeClass((row as UserItem).status)">
-            {{ statusLabel((row as UserItem).status) }}
+          <span class="badge whitespace-nowrap" :class="statusBadgeClass(row as UserItem)">
+            {{ statusLabel(row as UserItem) }}
           </span>
         </template>
       </AppColumn>

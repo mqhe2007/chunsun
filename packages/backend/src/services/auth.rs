@@ -136,7 +136,13 @@ pub async fn register_user(
     )
     .await?;
 
-    email::send_verification_email(pool, &created.email, &token, &config.public_origin).await;
+    if let Err(e) =
+        email::send_verification_email(pool, &created.email, &token, &config.public_origin).await
+    {
+        // 发信失败则回滚账号，避免「注册成功但永远无法激活」且重试撞 EMAIL_EXISTS。
+        let _ = user::delete_user_by_id(pool, &created.id).await;
+        return Err(e);
+    }
 
     if let Some(inv) = used_invitation {
         invitation::increment_invitation_used_count(pool, &inv.id).await?;
@@ -250,7 +256,7 @@ pub async fn resend_verification_email(
     )
     .await?;
 
-    email::send_verification_email(pool, &found.email, &token, &config.public_origin).await;
+    email::send_verification_email(pool, &found.email, &token, &config.public_origin).await?;
 
     Ok(())
 }
@@ -274,7 +280,7 @@ pub async fn request_password_reset(
     )
     .await?;
 
-    email::send_password_reset_email(pool, &found.email, &token, &config.public_origin).await;
+    email::send_password_reset_email(pool, &found.email, &token, &config.public_origin).await?;
 
     Ok(())
 }

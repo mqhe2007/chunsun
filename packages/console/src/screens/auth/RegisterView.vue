@@ -104,8 +104,11 @@ async function resendEmail() {
   try {
     await api.post("/auth/resend-verification", { email: registeredEmail.value });
     toast.success("已发送", "验证邮件已重新发送，请查收");
-  } catch {
-    toast.error("发送失败", "请稍后重试");
+  } catch (error) {
+    const message =
+      (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+      (error instanceof Error ? error.message : "请稍后重试");
+    toast.error("发送失败", message);
   }
 }
 </script>
