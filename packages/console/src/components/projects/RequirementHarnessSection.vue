@@ -210,6 +210,53 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
 
+/** 从未决决策项中提取展示文本，兼容 question/text/content/decision/字符串等多种结构 */
+function decisionText(d: unknown): string {
+  if (typeof d === "string") return d.trim() || "（无文本内容）";
+  if (d && typeof d === "object") {
+    const obj = d as Record<string, unknown>;
+    for (const key of ["question", "text", "content", "decision", "title", "summary"]) {
+      const v = obj[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "（无文本内容）";
+}
+
+/** 从代码标记项中提取展示文本，兼容 path/file/location 等多种字段 */
+function landmarkText(l: unknown): string {
+  if (typeof l === "string") return l.trim() || "（无路径）";
+  if (l && typeof l === "object") {
+    const obj = l as Record<string, unknown>;
+    const path = obj.path ?? obj.file ?? obj.location;
+    const symbol = obj.symbol ?? obj.func ?? obj.name;
+    if (typeof path === "string" && path.trim()) {
+      return typeof symbol === "string" && symbol.trim()
+        ? `${path.trim()}:${symbol.trim()}`
+        : path.trim();
+    }
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "（无路径）";
+}
+
+/** 从代码标记项中提取完整文本作为 title 提示 */
+function landmarkTitle(l: unknown): string {
+  if (l && typeof l === "object") {
+    const obj = l as Record<string, unknown>;
+    const note = obj.note ?? obj.description ?? obj.comment;
+    if (typeof note === "string" && note.trim()) {
+      return `${landmarkText(l)}\n${note.trim()}`;
+    }
+  }
+  return landmarkText(l);
+}
+
 async function loadSteps(runId: string) {
   if (stepsByRun.value[runId]) return;
   stepsLoading.value[runId] = true;
@@ -330,8 +377,8 @@ onMounted(fetchAll);
                 :key="i"
                 class="decision-item"
               >
-                <CircleQuestionMark :size="16" aria-hidden="true" />
-                <span>{{ d.question }}</span>
+                <CircleQuestionMark :size="16" aria-hidden="true" class="decision-icon" />
+                <span class="decision-text">{{ decisionText(d) }}</span>
               </div>
             </div>
             <p v-else class="empty-hint text-base-content/60">无未决 open decision。</p>
@@ -347,9 +394,9 @@ onMounted(fetchAll);
                 v-for="(l, i) in context.snapshot.codeLandmarks"
                 :key="i"
                 class="landmark-item"
-                :title="l.note"
+                :title="landmarkTitle(l)"
               >
-                {{ l.path }}<template v-if="l.symbol">:{{ l.symbol }}</template>
+                {{ landmarkText(l) }}
               </span>
             </div>
           </div>
@@ -964,13 +1011,24 @@ onMounted(fetchAll);
   align-items: flex-start;
   gap: 0.4rem;
   font-size: 0.85rem;
-  color: var(--color-warning);
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-warning) 30%, transparent);
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  line-height: 1.4;
 }
 
 .decision-icon {
-  margin-top: 0.05rem;
-  font-size: 0.85rem;
-  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--color-warning);
+}
+
+.decision-text {
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .landmarks {
@@ -984,8 +1042,14 @@ onMounted(fetchAll);
   font-size: 0.75rem;
   background: var(--color-base-200);
   border-radius: 6px;
-  padding: 0.15rem 0.4rem;
-  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  padding: 0.2rem 0.45rem;
+  color: color-mix(in oklab, var(--color-base-content) 88%, transparent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 
