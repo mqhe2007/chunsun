@@ -14,6 +14,7 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > 2026-08-21：模板从 `packages/cli/templates/` 迁到本目录；新增实例下载端点。
 > 2026-08-21（续）：CLI `init` / `update` 改为运行时 `GET /harness/template` 拉取，不再 `include_str!` 内嵌正文。
 > 2026-08-21-finished-stop：技能停点 CLI 从废弃的 `paused` 改为 `finished`（与 run-status-v2 对齐）。
+> 2026-08-27-knowledge-load-strategy：context→knowledge/memory 重命名落地到技能协议；知识文档增加 eager/lazy 加载策略与 knowledge index/doc 按需拉取。
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI；斜线命令 / commands / loop-rules 加宿主指针与边界措辞对齐。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

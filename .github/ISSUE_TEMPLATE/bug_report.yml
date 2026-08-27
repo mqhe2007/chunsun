@@ -53,7 +53,7 @@ body:
     attributes:
       label: 春笋版本
       description: 平台版本或 CLI 版本（可通过 `chunsun --version` 或控制台关于页面查看）
-      placeholder: v0.4.5
+      placeholder: v0.4.6
     validations:
       required: true
 
