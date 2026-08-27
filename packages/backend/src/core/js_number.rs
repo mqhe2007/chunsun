@@ -54,7 +54,7 @@ pub fn to_json_number(value: f64) -> Value {
 
 /// Prisma **写入 `Int` 列**时的取整语义。
 ///
-/// 实测（`PUT /projects/:id/contexts/:docId` 的 `sortOrder`）：
+/// 实测（`PUT /projects/:id/knowledge/documents/:docId` 的 `sortOrder`）：
 /// - `3.7 → 3`、`-3.7 → -3`、`-0.5 → 0`：**向零截断**，静默放行不报错
 /// - `1e3 → 1000`、`1.5e3 → 1500`：指数记法只是 JSON 数字的写法，同样截断
 /// - `2147483647` 合法；`2147483648` / `-2147483649` 撞 PG `int4` 范围，

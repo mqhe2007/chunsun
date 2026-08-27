@@ -19,15 +19,15 @@ use crate::core::js_number::prisma_int;
 use crate::core::serde_ext::double_option;
 use crate::routes::validate::validation_error;
 use crate::repos::harness::{
-    case_dto, context_dto, scenario_dto, step_dto, run_dto, CaseRow, UpsertCaseInput,
+    case_dto, memory_dto, scenario_dto, step_dto, run_dto, CaseRow, UpsertCaseInput,
     UpsertScenarioInput,
 };
 use crate::repos::harness::{
     check_completion_gate, create_run as repo_create_run, create_step as repo_create_step,
-    delete_case_by_id, delete_scenario_by_id, get_case_by_id, get_context, get_run_by_id,
+    delete_case_by_id, delete_scenario_by_id, get_case_by_id, get_memory, get_run_by_id,
     list_cases_by_requirement, list_runs_by_requirement, list_scenarios as repo_list_scenarios,
     list_steps_by_run, reset_requirement, set_case_status, set_run_status, set_scenario_status,
-    takeover_running_run, upsert_case, upsert_context, upsert_scenario,
+    takeover_running_run, upsert_case, upsert_memory, upsert_scenario,
 };
 use crate::repos::project::get_project_by_id;
 use crate::repos::requirement::get_requirement_by_id;
@@ -102,7 +102,7 @@ struct StepBody {
 //   create 路径（context 不存在）：必填缺参 → 500（Argument `snapshot` is missing）。
 // 显式 null 则真落库：列是 `Json` 非空，存 jsonb 'null'。故必须三态，扁平 Option 会把 null 吞成缺失。
 #[derive(Debug, Deserialize)]
-struct ContextBody {
+struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
     snapshot: Option<Option<Value>>,
 }
@@ -419,31 +419,31 @@ async fn list_steps(
 
 // ---------- Context ----------
 
-async fn get_context_handler(
+async fn get_memory_handler(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(p): Path<ReqParams>,
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
-    let ctx = get_context(&state.pool(), &p.requirement_id, &p.project_id).await?;
+    let ctx = get_memory(&state.pool(), &p.requirement_id, &p.project_id).await?;
     let Some(ctx) = ctx else {
-        return Err(AppError::not_found("CONTEXT_NOT_FOUND"));
+        return Err(AppError::not_found("MEMORY_NOT_FOUND"));
     };
-    Ok(ok_val(context_dto(&ctx)))
+    Ok(ok_val(memory_dto(&ctx)))
 }
 
-async fn put_context(
+async fn put_memory(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(p): Path<ReqParams>,
-    crate::api::ValidatedJson(body): crate::api::ValidatedJson<ContextBody>,
+    crate::api::ValidatedJson(body): crate::api::ValidatedJson<MemoryBody>,
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
     // 三态原样下传，缺失/显式 null 的分叉由仓储层按 update / create 路径各自复刻。
     let snapshot = body.snapshot.as_ref().map(|v| v.as_ref());
-    let ctx = upsert_context(&state.pool(), &p.requirement_id, &p.project_id, snapshot).await?;
-    Ok(ok_val(context_dto(&ctx)))
+    let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, snapshot).await?;
+    Ok(ok_val(memory_dto(&ctx)))
 }
 
 // ---------- reset ----------
@@ -723,8 +723,8 @@ pub fn router(state: AppState) -> Router<AppState> {
             axum::routing::get(list_steps).post(create_step_handler),
         )
         .route(
-            "/projects/{projectId}/requirements/{requirementId}/context",
-            axum::routing::get(get_context_handler).put(put_context),
+            "/projects/{projectId}/requirements/{requirementId}/memory",
+            axum::routing::get(get_memory_handler).put(put_memory),
         )
         .route(
             "/projects/{projectId}/requirements/{requirementId}/reset",
@@ -777,16 +777,16 @@ mod tests {
     #[test]
     fn context_snapshot_is_tri_state() {
         // 缺失 → update 路径跳过该列 / create 路径 500
-        let b: ContextBody = serde_json::from_str("{}").unwrap();
+        let b: MemoryBody = serde_json::from_str("{}").unwrap();
         assert_eq!(b.snapshot, None);
         // 显式 null → 落 jsonb 'null'（列非空，不是 SQL NULL）
-        let b: ContextBody = serde_json::from_str(r#"{"snapshot":null}"#).unwrap();
+        let b: MemoryBody = serde_json::from_str(r#"{"snapshot":null}"#).unwrap();
         assert_eq!(b.snapshot, Some(None));
         // 有值 → 全量覆盖（不是合并）
-        let b: ContextBody = serde_json::from_str(r#"{"snapshot":{"a":1}}"#).unwrap();
+        let b: MemoryBody = serde_json::from_str(r#"{"snapshot":{"a":1}}"#).unwrap();
         assert_eq!(b.snapshot, Some(Some(serde_json::json!({"a": 1}))));
         // t.Any() 不限类型：标量 / 数组同样合法
-        let b: ContextBody = serde_json::from_str(r#"{"snapshot":"s"}"#).unwrap();
+        let b: MemoryBody = serde_json::from_str(r#"{"snapshot":"s"}"#).unwrap();
         assert_eq!(b.snapshot, Some(Some(Value::String("s".into()))));
     }
 

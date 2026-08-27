@@ -12,7 +12,7 @@ use crate::core::env_var_crypto::env_var_has_stored_value;
 use crate::repos::defect::DefectRow;
 use crate::repos::project::ProjectRow;
 use crate::repos::project_activity::ProjectActivityRow;
-use crate::repos::project_context::ContextDocRow;
+use crate::repos::project_knowledge::KnowledgeDocRow;
 use crate::repos::project_env_var::ProjectEnvVarRow;
 use crate::repos::prompt::PromptRow;
 use crate::repos::repository::RepositoryRow;
@@ -160,7 +160,7 @@ pub fn activity_dto(a: &ProjectActivityRow) -> Value {
 /// `serializeContextDocument`：**不含 `createdAt`**，只回 `updatedAt`。
 ///
 /// 排序用的 `createdAt` 只在列表 `ORDER BY` 里出现，不外泄到响应里。
-pub fn context_doc_dto(d: &ContextDocRow) -> Value {
+pub fn knowledge_doc_dto(d: &KnowledgeDocRow) -> Value {
     json!({
         "id": d.id,
         "title": d.title,
@@ -184,7 +184,7 @@ pub fn constitution_dto(constitution_md: &str, updated_at: &chrono::DateTime<chr
 
 /// `ProjectContextItem`：宪法与自定义文档在列表里被抹平成同一形状
 /// （只有 `key/title/content/system` 四个字段，**没有** `sortOrder`/`updatedAt`）。
-pub fn context_item_dto(key: &str, title: &str, content: &str, system: bool) -> Value {
+pub fn knowledge_item_dto(key: &str, title: &str, content: &str, system: bool) -> Value {
     json!({
         "key": key,
         "title": title,

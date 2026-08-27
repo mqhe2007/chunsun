@@ -13,7 +13,7 @@ const route = useRoute();
 const items = computed<MegaNavItem[]>(() => {
   const base = `/projects/${props.projectId}/settings`;
   return [
-    { key: "", label: "上下文设置", icon: BookOpen, to: base },
+    { key: "", label: "知识设置", icon: BookOpen, to: base },
     { key: "general", label: "通用设置", icon: Settings, to: `${base}/general` },
     { key: "members", label: "成员管理", icon: Users, to: `${base}/members` },
     { key: "secret-key", label: "项目密钥", icon: Key, to: `${base}/secret-key` },

@@ -1,11 +1,11 @@
 
-pub mod context;
 pub mod defect;
 pub mod env;
 
 
 pub mod harness;
 pub mod init;
+pub mod knowledge;
 pub mod repo;
 pub mod requirement;
 pub mod update;

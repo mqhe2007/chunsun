@@ -52,6 +52,32 @@ enum RequirementCmd {
         #[arg(long)]
         json: bool,
     },
+    /// 需求工作记忆（Requirement Memory）
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryAction {
+    /// 拉取需求工作记忆
+    Get {
+        /// 需求 ID
+        req: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 增量写回需求工作记忆（顶层 key 合并后 PUT）
+    Put {
+        /// 需求 ID
+        req: String,
+        /// snapshot JSON 字符串，例如 '{"lastRunSummary":{...},"codeLandmarks":[...]}'
+        #[arg(long)]
+        snapshot: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -89,6 +115,162 @@ struct ItemResponse {
     error: Option<String>,
 }
 
+// ---------- 需求工作记忆（Requirement Memory） ----------
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementMemoryRow {
+    id: String,
+    requirement_id: String,
+    #[allow(dead_code)]
+    project_id: String,
+    snapshot: Value,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryResponse {
+    success: bool,
+    data: Option<RequirementMemoryRow>,
+    error: Option<String>,
+}
+
+fn memory_path(project_id: &str, req: &str) -> String {
+    format!("/projects/{project_id}/requirements/{req}/memory")
+}
+
+/// 顶层 key 增量合并：patch 覆盖同名 key，其余保留。
+fn merge_snapshot(existing: &Value, patch: &Value) -> Value {
+    let mut base = match existing {
+        Value::Object(map) => Value::Object(map.clone()),
+        _ => json!({}),
+    };
+    if let Some(obj) = patch.as_object() {
+        if let Some(base_obj) = base.as_object_mut() {
+            for (k, v) in obj {
+                base_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    base
+}
+
+fn fetch_existing_snapshot(api: &ApiClient, path: &str) -> Result<Value, CmdError> {
+    match api.get::<Value>(path) {
+        Ok(raw) => {
+            if raw.get("success").and_then(|v| v.as_bool()) == Some(true) {
+                Ok(raw
+                    .get("data")
+                    .and_then(|d| d.get("snapshot"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({})))
+            } else {
+                Ok(json!({}))
+            }
+        }
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("MEMORY_NOT_FOUND") || msg.contains("(404)") {
+                Ok(json!({}))
+            } else {
+                Err(err.into())
+            }
+        }
+    }
+}
+
+fn run_memory_get(req: String, json: bool) -> CmdResult {
+    let config = load_config();
+    let api = ApiClient::new(&config)?;
+    let path = memory_path(&config.project_id, &req);
+
+    match api.get::<MemoryResponse>(&path) {
+        Ok(result) => {
+            if !result.success {
+                let err = result.error.unwrap_or_else(|| "获取工作记忆失败".into());
+                if err == "MEMORY_NOT_FOUND" {
+                    if json {
+                        return print_json(&json!({ "exists": false, "requirementId": req }));
+                    }
+                    println!("[chunsun] 暂无工作记忆（Memory）。");
+                    println!(
+                        "  写入：chunsun requirement memory put {req} --snapshot '{{\"lastRunSummary\":{{}}}}'"
+                    );
+                    return Ok(());
+                }
+                return Err(CmdError::new(err));
+            }
+            let data = result
+                .data
+                .ok_or_else(|| CmdError::new("获取工作记忆失败"))?;
+            if json {
+                return print_json(&data);
+            }
+            println!("需求: {}", data.requirement_id);
+            println!("Memory: {}", data.id);
+            println!("更新: {}", data.updated_at);
+            println!("snapshot:");
+            println!("{}", serde_json::to_string_pretty(&data.snapshot)?);
+            Ok(())
+        }
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("MEMORY_NOT_FOUND") {
+                if json {
+                    return print_json(&json!({ "exists": false, "requirementId": req }));
+                }
+                println!("[chunsun] 暂无工作记忆（Memory）。");
+                println!(
+                    "  写入：chunsun requirement memory put {req} --snapshot '{{\"lastRunSummary\":{{}}}}'"
+                );
+                Ok(())
+            } else {
+                Err(err.into())
+            }
+        }
+    }
+}
+
+fn run_memory_put(req: String, snapshot_raw: String, json: bool) -> CmdResult {
+    let config = load_config();
+    let api = ApiClient::new(&config)?;
+    let path = memory_path(&config.project_id, &req);
+
+    let patch: Value = serde_json::from_str(&snapshot_raw)
+        .map_err(|e| CmdError::new(format!("--snapshot 不是合法 JSON：{e}")))?;
+    if !patch.is_object() {
+        return Err(CmdError::new("--snapshot 须为 JSON 对象"));
+    }
+
+    let existing = fetch_existing_snapshot(&api, &path)?;
+    let merged = merge_snapshot(&existing, &patch);
+
+    let result: MemoryResponse =
+        api.put(&path, json!({ "snapshot": merged.clone() }))?;
+    if !result.success {
+        return Err(CmdError::new(
+            result.error.unwrap_or_else(|| "写入工作记忆失败".into()),
+        ));
+    }
+    let data = result
+        .data
+        .ok_or_else(|| CmdError::new("写入工作记忆失败"))?;
+
+    if json {
+        return print_json(&data);
+    }
+    println!("[chunsun] 工作记忆已写入：{}", data.requirement_id);
+    println!("  更新: {}", data.updated_at);
+    let keys: Vec<&str> = merged
+        .as_object()
+        .map(|o| o.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    if !keys.is_empty() {
+        println!("  snapshot keys: {}", keys.join(", "));
+    }
+    Ok(())
+}
+
 fn print_requirement(req: &RequirementSummary) {
     println!("{}  [{}]", req.id, req.status);
     if let Some(app) = &req.application {
@@ -114,6 +296,10 @@ fn print_requirement(req: &RequirementSummary) {
 
 pub fn run(args: RequirementArgs) -> CmdResult {
     match args.command {
+        RequirementCmd::Memory { action } => match action {
+            MemoryAction::Get { req, json } => run_memory_get(req, json),
+            MemoryAction::Put { req, snapshot, json } => run_memory_put(req, snapshot, json),
+        },
         RequirementCmd::List {
             status,
             application,

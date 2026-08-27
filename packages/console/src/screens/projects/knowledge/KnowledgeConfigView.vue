@@ -79,15 +79,15 @@ async function fetchContexts() {
   loading.value = true;
   try {
     const { data } = await api.get<{ success: boolean; data: ContextsPayload }>(
-      `/projects/${projectId()}/contexts`,
+      `/projects/${projectId()}/knowledge/documents`,
     );
     if (data.success) {
       applyPayload(data.data);
     } else {
-      toast.error("获取失败", "无法加载上下文配置");
+      toast.error("获取失败", "无法加载知识");
     }
   } catch {
-    toast.error("获取失败", "加载上下文配置失败");
+    toast.error("获取失败", "加载知识失败");
   } finally {
     loading.value = false;
   }
@@ -121,19 +121,19 @@ async function saveDoc() {
   try {
     if (editingKey.value === null) {
       const res = await api.post<{ success: boolean }>(
-        `/projects/${projectId()}/contexts`,
+        `/projects/${projectId()}/knowledge/documents`,
         { title, content: formContent.value },
       );
       if (!res.data.success) throw new Error("create failed");
     } else if (isEditingConstitution.value) {
       const res = await api.put<{ success: boolean }>(
-        `/projects/${projectId()}/contexts/constitution`,
+        `/projects/${projectId()}/knowledge/constitution`,
         { content: formContent.value },
       );
       if (!res.data.success) throw new Error("constitution update failed");
     } else {
       const res = await api.put<{ success: boolean }>(
-        `/projects/${projectId()}/contexts/${editingKey.value}`,
+        `/projects/${projectId()}/knowledge/documents/${editingKey.value}`,
         { title, content: formContent.value },
       );
       if (!res.data.success) throw new Error("update failed");
@@ -153,7 +153,7 @@ async function confirmDelete(row: ContextRow) {
   if (row.system || row.key === CONSTITUTION_KEY) return;
 
   const ok = await confirm({
-    title: "删除上下文文档",
+    title: "删除知识文档",
     message: `确定删除「${row.title}」？删除后 Agent 将不再加载该文档。`,
     confirmLabel: "删除",
     danger: true,
@@ -161,7 +161,7 @@ async function confirmDelete(row: ContextRow) {
   if (!ok) return;
   try {
     const res = await api.delete<{ success: boolean }>(
-      `/projects/${projectId()}/contexts/${row.key}`,
+      `/projects/${projectId()}/knowledge/documents/${row.key}`,
     );
     if (!res.data.success) throw new Error("delete failed");
     toast.success("已删除");
@@ -175,7 +175,7 @@ onMounted(fetchContexts);
 </script>
 
 <template>
-  <AppPage title="上下文配置">
+  <AppPage title="知识">
     <template #actions>
       <button
         type="button"
@@ -192,7 +192,7 @@ onMounted(fetchContexts);
     <AppTable
       :rows="rows"
       :loading="loading"
-      empty="暂无上下文文档"
+      empty="暂无知识文档"
       striped
     >
       <AppColumn header="标题">

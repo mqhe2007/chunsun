@@ -49,7 +49,7 @@ vi.mock("@/ui", () => ({
 import { api } from "./api";
 import { router } from "../router";
 
-function makeError(message: string, status = 404, url = "/api/v1/requirements/x/context") {
+function makeError(message: string, status = 404, url = "/api/v1/requirements/x/memory") {
   return {
     response: {
       status,

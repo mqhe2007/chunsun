@@ -1,6 +1,6 @@
 ---
 name: chunsun
-description: 春笋自主交付工作技能。用户表达「开始/继续/迭代某个需求」「修一个缺陷」等意图时触发。平台 SSOT：需求/轮次/步骤/Context/场景/用例/缺陷存平台；本地为 .env + 本技能 + 两个斜线命令（/chunsun /chunsun-fix）。自主交付：一次 /chunsun 连续工作到验收绿 / 需用户决策 / 用户打断才停。Trigger on start/continue/iterate a requirement, or fix a defect. Platform SSOT.
+description: 春笋自主交付工作技能。用户表达「开始/继续/迭代某个需求」「修一个缺陷」等意图时触发。平台 SSOT：需求/轮次/步骤/Memory/场景/用例/缺陷存平台；本地为 .env + 本技能 + 两个斜线命令（/chunsun /chunsun-fix）。自主交付：一次 /chunsun 连续工作到验收绿 / 需用户决策 / 用户打断才停。Trigger on start/continue/iterate a requirement, or fix a defect. Platform SSOT.
 argument-hint: '<requirement-id>'
 ---
 
@@ -27,7 +27,7 @@ argument-hint: '<requirement-id>'
 | 上报 Step | `chunsun_step_add` | `chunsun step add` |
 | 场景 upsert / 状态 | `chunsun_scenario_upsert` / `chunsun_scenario_status` | `chunsun scenario upsert/status` |
 | 用例 list / upsert / 状态 | `chunsun_case_list` / `chunsun_case_upsert` / `chunsun_case_status` | `chunsun case list/upsert/status` |
-| 工作记忆读写 | `chunsun_context_get` / `chunsun_context_put` | `chunsun context get/put` |
+| 工作记忆读写 | `chunsun_requirement_memory_get` / `chunsun_requirement_memory_put` | `chunsun requirement memory get/put` |
 | 全量重置 | `chunsun_reset` | `chunsun reset` |
 | 缺陷派生修复 | `chunsun_fix` | `chunsun fix` |
 | 环境变量 | `chunsun_env_list` / `chunsun_env_get` | `chunsun env list/get` |
@@ -72,7 +72,7 @@ argument-hint: '<requirement-id>'
 
 ```
 /chunsun <需求ID>
-  1. 拉取上下文：chunsun context get <ID> + chunsun scenario list <ID> --include-cases
+  1. 拉取上下文：chunsun requirement memory get <ID> + chunsun scenario list <ID> --include-cases
      + 当前 Git 状态 + 环境变量（chunsun env list）
   2. 开新 Run：chunsun run start <ID>
      - 若报已有 Run 在跑（撞锁）：向用户展示最后活跃时间，用户确认后
@@ -97,9 +97,9 @@ argument-hint: '<requirement-id>'
 
 **停点只有三种**（验收全绿 / 需用户决策 / 用户打断）与 completed 平台硬条件见 `references/loop-rules.md`「停点」；平台拒绝时返回 COMPLETION_GATE_NOT_MET，不要绕过。
 
-## Context（工作记忆）
+## Memory（工作记忆）
 
-每个需求一份，平台 SSOT，CLI 维护。**关系型数据（场景/用例）唯一真相在平台表，Context 不存镜像**——启动时实时拉取聚合。Context 只存：
+每个需求一份，平台 SSOT，CLI 维护。**关系型数据（场景/用例）唯一真相在平台表，Memory 不存镜像**——启动时实时拉取聚合。Memory 只存：
 
 - `requirementSnapshot`：已澄清边界（重来保留）
 - `lastRunSummary`：上一轮决策链与结果
@@ -107,7 +107,7 @@ argument-hint: '<requirement-id>'
 - `codeLandmarks`：关键代码位置/摘要（不存代码本体）
 - `envRefs`：引用的环境变量 key
 
-**粒度严控**（整体 ~20k 字符内）：Context 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+**粒度严控**（整体 ~20k 字符内）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
 
 ## 验收定义（passing 的标准）
 
@@ -133,7 +133,7 @@ chunsun step add <ID> --run <runId> --kind reflect --summary "评审了什么 / 
 ## 自然语言动作
 
 - **豁免**：用户说"这个我认了 / 暂不修" → 场景置 waived + Step 留痕。
-- **重来**：用户说"重做 / 重来" → `chunsun reset <ID>`（幂等：清 Context 工作记忆保留澄清边界 + 场景/用例重置 pending + 开新 Run），继续循环。
+- **重来**：用户说"重做 / 重来" → `chunsun reset <ID>`（幂等：清 Memory 工作记忆保留澄清边界 + 场景/用例重置 pending + 开新 Run），继续循环。
 - **暂停/停**：用户直接打断 → 收尾置 finished（`--reason` 说明打断）；继续 = 再 `/chunsun` 开新 Run。
 
 ## 三层边界（编排归属）
@@ -149,7 +149,8 @@ chunsun run start|takeover|status|list|remind <需求ID>
 chunsun step add <需求ID> --run <runId> --kind <think|code|test|verify|ask_user|info|reflect> --summary <...>
 chunsun scenario list|upsert|status
 chunsun case list|upsert|status
-chunsun context get|put
+chunsun requirement memory get|put <需求ID>
+chunsun knowledge [--json]
 chunsun reset <需求ID>
 chunsun fix <缺陷ID>
 ```

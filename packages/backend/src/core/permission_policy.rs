@@ -116,7 +116,7 @@ pub const PROJECT_ACTIONS: &[(ProjectAction, ProjectActionMeta)] = &[
     ),
     (
         ProjectAction::ContextWrite,
-        ProjectActionMeta { level: ProjectPrivilegeLevel::Member, label: "上下文文档 / 宪法 / 需求工作记忆", group: "collab" },
+        ProjectActionMeta { level: ProjectPrivilegeLevel::Member, label: "知识文档 / 宪法 / 需求工作记忆", group: "collab" },
     ),
     (
         ProjectAction::PromptWrite,

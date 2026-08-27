@@ -144,7 +144,8 @@ chunsun run …                 # list | start | takeover | status | remind   �
 chunsun step add|list         # 上报/查看执行步骤
 chunsun scenario …            # list | upsert | status                     （验收场景）
 chunsun case …                # list | upsert | status                     （验收用例）
-chunsun context get|put       # 需求工作记忆（Context）
+chunsun requirement memory get|put  # 需求工作记忆（Memory）
+chunsun knowledge [--json]      # 项目知识概览（宪法+自定义文档+需求/环境变量统计）
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付（/chunsun-fix）
 chunsun env list|get          # 项目环境变量（实时；本地优先，不同步落盘）

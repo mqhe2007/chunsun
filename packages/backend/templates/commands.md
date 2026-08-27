@@ -39,18 +39,18 @@ chunsun case status <需求ID> <用例ID> <passed|failed|blocked|skipped> [--res
 
 场景/用例唯一真相在平台表；`waived` 只能由用户自然语言豁免触发并留痕。
 
-## chunsun context / reset / fix
+## chunsun knowledge / requirement memory / reset / fix
 
 ```bash
-chunsun context                                                  # 项目整体开发上下文摘要（区别于需求 Context）
-chunsun context get <需求ID>                                     # 拉取工作记忆
-chunsun context put <需求ID> --snapshot '{"lastRunSummary":{...}}'  # 增量写回（顶层 key 合并）
+chunsun knowledge [--json]                                      # 项目知识概览（宪法+自定义文档+需求/环境变量统计）
+chunsun requirement memory get <需求ID>                          # 拉取需求工作记忆
+chunsun requirement memory put <需求ID> --snapshot '{"lastRunSummary":{...}}'  # 增量写回（顶层 key 合并）
 chunsun reset <需求ID>                                           # 全量重置：清工作记忆（保留澄清边界）+ 场景/用例重置 pending + 开新 Run
 chunsun fix <缺陷ID>                                             # 派生唯一修复需求（缺陷 1:1）并启动自主交付
 ```
 
-`put` 会先读已有 snapshot，再按顶层 key 合并后写入；缺省 Context 时从空对象开始。
-`get` 在尚无 Context 时友好提示并退出 0（`--json` 返回 `{"exists":false}`）。
+`put` 会先读已有 snapshot，再按顶层 key 合并后写入；缺省 Memory 时从空对象开始。
+`get` 在尚无 Memory 时友好提示并退出 0（`--json` 返回 `{"exists":false}`）。
 
 ## chunsun requirement / defect / env（基础管理）
 
@@ -74,7 +74,7 @@ chunsun env list / env get <key>                                 # 环境变量�
 chunsun init                # 安装/刷新技能文件并绑定仓库
 chunsun update              # 更新 CLI 并刷新模板
 chunsun main-spec list      # 主规格库（按域分篇，与需求循环正交）
-chunsun context             # 项目整体开发上下文摘要（区别于需求 Context）
+chunsun knowledge           # 项目知识概览（宪法+自定义文档+需求/环境变量统计）
 ```
 
 ## 规则提醒层（柔性约束）

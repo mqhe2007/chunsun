@@ -301,7 +301,7 @@ export const docCategories: DocCategory[] = [
           {
             t: "ol",
             items: [
-              "Agent 拉取需求上下文与验收场景，开启一个新轮次。",
+              "Agent 拉取需求工作记忆与验收场景，开启一个新轮次。",
               "进入循环：决策下一步 → 执行 → 上报步骤 → 更新验收场景与用例。",
               "在三个停点停下：验收全绿（需求完成）/ 需要你决策 / 你主动打断。",
             ],
@@ -469,7 +469,7 @@ export const docCategories: DocCategory[] = [
         blocks: [
           {
             t: "p",
-            text: "每个需求都有一份工作记忆（Context），由平台保存、CLI 增量维护。它是唯一进 Agent 上下文的记忆源，也是断点续跑的关键。",
+            text: "每个需求都有一份工作记忆（Memory），由平台保存、CLI 增量维护。它是唯一进 Agent 上下文的记忆源，也是断点续跑的关键。",
           },
           {
             t: "h2",
@@ -655,7 +655,7 @@ export const docCategories: DocCategory[] = [
         slug: "settings",
         title: "项目设置",
         icon: "settings",
-        desc: "通用设置、成员、密钥、环境变量与上下文。",
+        desc: "通用设置、成员、密钥、环境变量与项目知识。",
         blocks: [
           {
             t: "h2",
@@ -691,11 +691,11 @@ export const docCategories: DocCategory[] = [
           },
           {
             t: "h2",
-            text: "上下文",
+            text: "项目知识",
           },
           {
             t: "p",
-            text: "项目级自定义上下文文档，作为全局背景注入 Agent；与需求级工作记忆（Context）是两层不同机制。",
+            text: "项目级自定义知识文档，作为全局背景注入 Agent；与需求级工作记忆（Memory）是两层不同机制。",
           },
         ],
       },
@@ -895,7 +895,7 @@ chunsun update                # 检查并更新 CLI 到最新版本`,
           {
             t: "ol",
             items: [
-              "拉取需求上下文与验收场景聚合，开启新轮次。",
+              "拉取需求工作记忆与验收场景聚合，开启新轮次。",
               "循环：决策下一步 → 执行 → 上报步骤 → 更新场景与用例。",
               "停点：验收全绿 / 需要你决策（ask_user）/ 你打断。",
             ],

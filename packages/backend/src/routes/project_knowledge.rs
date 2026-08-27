@@ -1,7 +1,7 @@
-//! 项目上下文路由（1:1 移植自 `routes/projectContexts.ts` + `routes/projectContext.ts`）。
+//! 项目知识路由（1:1 移植自 `routes/projectContexts.ts` + `routes/projectContext.ts`）。
 //!
-//! 两个旧文件合并成一个模块：它们共用 `listProjectContexts`，且 `/contexts` 与
-//! `/context` 只差一个字母，分开放更容易写错。六条端点全部走 `auth_middleware`，
+//! 两个旧文件合并成一个模块：它们共用 `listProjectKnowledge`，且 `/knowledge` 与
+//! `/context`（兼容旧路径）共用同一组 handler。六条端点全部走 `auth_middleware`，
 //! 权限档**只有项目可见性**——不可见一律 404 `PROJECT_NOT_FOUND`（不是 403）。
 //!
 //! 三个必须逐字节复刻的怪癖（全部实测自旧后端，不是推断）：
@@ -11,16 +11,16 @@
 //!    见 [`crate::core::js_number::prisma_int`]。
 //! 2. **空 `PUT {}` 不刷新 `updatedAt`**：Prisma 对空 `data` 退化成纯读，
 //!    `@updatedAt` 不动。这与 defect 域「空补丁也刷新」的行为**相反**，
-//!    因为那边显式写了字段。仓储层 [`crate::repos::project_context::update_context_document`]
+//!    因为那边显式写了字段。仓储层 [`crate::repos::project_knowledge::update_knowledge_document`]
 //!    里的提前返回就是为这个。
 //! 3. **`title` 的 trim 时机**：POST 在路由层 trim 后判空 → 纯空格是
 //!    400 `TITLE_REQUIRED`；PUT 在仓储层 trim 且**不判空** → 纯空格存成空串、200。
 //!    同一个字段两条路径两种结局，不要顺手统一。
 //!
-//! 另有一处死代码需要保留形状：`PUT /contexts/constitution` 被静态路由抢先命中，
+//! 另有一处死代码需要保留形状：`PUT /knowledge/constitution` 被静态路由抢先命中，
 //! 所以 `docId == "constitution"` 分支里的 400 `USE_CONSTITUTION_ENDPOINT`
 //! 永远不会触发（axum 的 matchit 与 Elysia 一样静态段优先）。而
-//! `DELETE /contexts/constitution` 没有静态路由，**会**命中并返回 400
+//! `DELETE /knowledge/constitution` 没有静态路由，**会**命中并返回 400
 //! `CONSTITUTION_NOT_DELETABLE`。
 
 use axum::extract::{Path, State};
@@ -33,13 +33,13 @@ use crate::api::{ok, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
 use crate::core::js_number::prisma_int;
 use crate::core::serde_ext::double_option;
-use crate::repos::project_context as ctx_repo;
+use crate::repos::project_knowledge as ctx_repo;
 use crate::repos::project_env_var::count_env_vars_by_project;
 use crate::repos::requirement::count_requirements_by_status;
-use crate::routes::dto::{constitution_dto, context_doc_dto};
+use crate::routes::dto::{constitution_dto, knowledge_doc_dto};
 use crate::routes::validate::{optional_number, optional_string, required_string};
 use crate::services::project_access::visible_project_id;
-use crate::services::project_context::list_project_contexts;
+use crate::services::project_knowledge::list_project_knowledge;
 use crate::state::AppState;
 
 /// `title` 是 `t.String({ minLength: 1, maxLength: 200 })`。
@@ -56,7 +56,7 @@ pub struct ConstitutionBody {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateContextBody {
+pub struct CreateKnowledgeBody {
     #[serde(default, deserialize_with = "double_option")]
     pub title: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -65,7 +65,7 @@ pub struct CreateContextBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateContextBody {
+pub struct UpdateKnowledgeBody {
     #[serde(default, deserialize_with = "double_option")]
     pub title: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -94,13 +94,13 @@ async fn visible(
 
 // ---------------------------------------------------------------- 第 11 域
 
-async fn list_contexts(
+async fn list_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
-    let contexts = list_project_contexts(&state.pool(), &pid).await?;
+    let contexts = list_project_knowledge(&state.pool(), &pid).await?;
     Ok(ok(json!({ "contexts": contexts })))
 }
 
@@ -122,11 +122,11 @@ async fn put_constitution(
     )))
 }
 
-async fn create_context(
+async fn create_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
-    ValidatedJson(body): ValidatedJson<CreateContextBody>,
+    ValidatedJson(body): ValidatedJson<CreateKnowledgeBody>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
     let title = required_string("title", &body.title, TITLE_MIN, TITLE_MAX)?;
@@ -139,15 +139,15 @@ async fn create_context(
     }
 
     let doc =
-        ctx_repo::create_context_document(&state.pool(), &pid, title, content.unwrap_or("")).await?;
-    Ok(ok(context_doc_dto(&doc)))
+        ctx_repo::create_knowledge_document(&state.pool(), &pid, title, content.unwrap_or("")).await?;
+    Ok(ok(knowledge_doc_dto(&doc)))
 }
 
-async fn update_context(
+async fn update_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path((project_id, doc_id)): Path<(String, String)>,
-    ValidatedJson(body): ValidatedJson<UpdateContextBody>,
+    ValidatedJson(body): ValidatedJson<UpdateKnowledgeBody>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
     if doc_id == "constitution" {
@@ -168,18 +168,18 @@ async fn update_context(
     };
 
     // 存在性检查用 (id, projectId) 双条件，跨项目取不到别人的文档
-    let existing = ctx_repo::find_context_document(&state.pool(), &pid, &doc_id).await?;
+    let existing = ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id).await?;
     let Some(existing) = existing else {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     };
 
     let doc =
-        ctx_repo::update_context_document(&state.pool(), &existing, title, content, sort_order)
+        ctx_repo::update_knowledge_document(&state.pool(), &existing, title, content, sort_order)
             .await?;
-    Ok(ok(context_doc_dto(&doc)))
+    Ok(ok(knowledge_doc_dto(&doc)))
 }
 
-async fn delete_context(
+async fn delete_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path((project_id, doc_id)): Path<(String, String)>,
@@ -189,18 +189,18 @@ async fn delete_context(
         return Err(AppError::bad_request("CONSTITUTION_NOT_DELETABLE"));
     }
 
-    let existing = ctx_repo::find_context_document(&state.pool(), &pid, &doc_id).await?;
+    let existing = ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id).await?;
     if existing.is_none() {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     }
-    ctx_repo::delete_context_document(&state.pool(), &doc_id).await?;
+    ctx_repo::delete_knowledge_document(&state.pool(), &doc_id).await?;
     // 回的是入参 docId，不是删掉那行的 id（两者相同，但形状要照抄）
     Ok(ok(json!({ "id": doc_id })))
 }
 
-/// `DELETE /contexts/constitution`：宪法不可删除。
+/// `DELETE /knowledge/constitution`：宪法不可删除。
 ///
-/// 静态路由 `/contexts/constitution` 只挂了 PUT，若不单独挂 DELETE，
+/// 静态路由 `/knowledge/constitution` 只挂了 PUT，若不单独挂 DELETE，
 /// axum 对该路径的 DELETE 会命中静态路由（无 DELETE 方法）直接回 405，
 /// 落不到 `:docId` 通配路由的 CONSTITUTION_NOT_DELETABLE 分支。
 /// 故显式挂 DELETE，先校验项目可见性（不可见 → 404），再回 400 对齐旧后端。
@@ -226,7 +226,7 @@ fn by_status_map(groups: &[(String, i64)]) -> Value {
     Value::Object(map)
 }
 
-async fn get_context(
+async fn get_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
@@ -243,7 +243,7 @@ async fn get_context(
 
     let req_counts = count_requirements_by_status(&state.pool(), &project.id).await?;
     let env_var_count = count_env_vars_by_project(&state.pool(), &project.id).await?;
-    let contexts = list_project_contexts(&state.pool(), &project.id).await?;
+    let contexts = list_project_knowledge(&state.pool(), &project.id).await?;
 
     let total: i64 = req_counts.iter().map(|(_, c)| c).sum();
 
@@ -268,18 +268,20 @@ async fn get_context(
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/projects/{projectId}/contexts", get(list_contexts))
-        .route("/projects/{projectId}/contexts", post(create_context))
+        // 项目知识概览（含项目信息、需求/环境变量统计、知识文档列表）
+        .route("/projects/{projectId}/knowledge", get(get_knowledge))
+        // 知识文档 CRUD
+        .route("/projects/{projectId}/knowledge/documents", get(list_knowledge))
+        .route("/projects/{projectId}/knowledge/documents", post(create_knowledge))
         .route(
-            "/projects/{projectId}/contexts/constitution",
+            "/projects/{projectId}/knowledge/constitution",
             put(put_constitution).delete(delete_constitution),
         )
-        .route("/projects/{projectId}/contexts/{docId}", put(update_context))
+        .route("/projects/{projectId}/knowledge/documents/{docId}", put(update_knowledge))
         .route(
-            "/projects/{projectId}/contexts/{docId}",
-            delete(delete_context),
+            "/projects/{projectId}/knowledge/documents/{docId}",
+            delete(delete_knowledge),
         )
-        .route("/projects/{projectId}/context", get(get_context))
         .route_layer(axum::middleware::from_fn_with_state(
             state,
             crate::auth::auth_middleware,

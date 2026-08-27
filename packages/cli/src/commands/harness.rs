@@ -200,7 +200,7 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
     }
 
     if let Some(context) = api
-        .get::<Value>(&format!("{}/context", req_path(project_id, req)))
+        .get::<Value>(&format!("{}/memory", req_path(project_id, req)))
         .ok()
         .and_then(|v| v.get("data").cloned())
     {
@@ -765,7 +765,7 @@ pub fn run_reset(args: ResetArgs) -> CmdResult {
     if args.json {
         return print_json(&data);
     }
-    println!("[chunsun] 已全量重置：Context 工作记忆清空（保留澄清边界），场景/用例重置 pending，新 Run 已启动。");
+    println!("[chunsun] 已全量重置：Memory 工作记忆清空（保留澄清边界），场景/用例重置 pending，新 Run 已启动。");
     Ok(())
 }
 

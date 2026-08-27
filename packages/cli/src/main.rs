@@ -49,8 +49,8 @@ enum Commands {
     Fix(commands::harness::FixArgs),
     /// 检查并更新 chunsun CLI 到最新版本
     Update(commands::update::UpdateArgs),
-    /// 项目开发上下文摘要；子命令 get|put 管理需求工作记忆
-    Context(commands::context::ContextArgs),
+    /// 项目知识概览（项目宪法+自定义文档+需求/环境变量统计）
+    Knowledge(commands::knowledge::KnowledgeArgs),
     /// （内部）刷新当前仓库的春笋技能模板
     #[command(name = "_refresh-templates", hide = true)]
     RefreshTemplates,
@@ -93,7 +93,7 @@ fn main() -> ExitCode {
         Some(Commands::Reset(args)) => commands::harness::run_reset(args),
         Some(Commands::Fix(args)) => commands::harness::run_fix(args),
         Some(Commands::Update(args)) => commands::update::run(args),
-        Some(Commands::Context(args)) => commands::context::run(args),
+        Some(Commands::Knowledge(args)) => commands::knowledge::run(args),
         Some(Commands::RefreshTemplates) => commands::update::run_refresh_templates(),
     };
 

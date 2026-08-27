@@ -25,7 +25,7 @@ const STEP_COLS: &str =
 const SCENARIO_COLS: &str =
     "id, requirement_id, project_id, key, title, description, status::text AS status, sort_order, created_at, updated_at";
 const CASE_COLS: &str = "id, requirement_id, project_id, scenario_id, title, kind::text AS kind, steps, expected, local_path, execution_plan::text AS execution_plan, status::text AS status, actual_result, executed_at, executed_by::text AS executed_by, sort_order, created_at, updated_at";
-const CONTEXT_COLS: &str = "id, requirement_id, project_id, snapshot, updated_at";
+const MEMORY_COLS: &str = "id, requirement_id, project_id, snapshot, updated_at";
 
 // ---------- Row structs ----------
 
@@ -91,7 +91,7 @@ pub struct CaseRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ContextRow {
+pub struct MemoryRow {
     pub id: String,
     pub requirement_id: String,
     pub project_id: String,
@@ -166,7 +166,7 @@ pub fn case_dto(c: &CaseRow) -> Value {
     })
 }
 
-pub fn context_dto(c: &ContextRow) -> Value {
+pub fn memory_dto(c: &MemoryRow) -> Value {
     json!({
         "id": c.id,
         "requirementId": c.requirement_id,
@@ -392,13 +392,13 @@ pub async fn list_steps_by_run(pool: &PgPool, run_id: &str) -> Result<Vec<StepRo
 
 // ---------- Context ----------
 
-pub async fn get_context(
+pub async fn get_memory(
     pool: &PgPool,
     requirement_id: &str,
     project_id: &str,
-) -> Result<Option<ContextRow>, AppError> {
-    let row = sqlx::query_as::<_, ContextRow>(&format!(
-        "SELECT {CONTEXT_COLS} FROM context WHERE requirement_id = $1 AND project_id = $2"
+) -> Result<Option<MemoryRow>, AppError> {
+    let row = sqlx::query_as::<_, MemoryRow>(&format!(
+        "SELECT {MEMORY_COLS} FROM requirement_memory WHERE requirement_id = $1 AND project_id = $2"
     ))
     .bind(requirement_id)
     .bind(project_id)
@@ -414,14 +414,14 @@ pub async fn get_context(
 ///   连 `@updatedAt` 都不动 → 这里直接回读原行；create 路径必填缺参 → 500。
 /// - `Some(None)`（显式 null）：列是 `Json` 非空，落 jsonb `'null'`。
 /// - `Some(Some(v))`：正常写入。
-pub async fn upsert_context(
+pub async fn upsert_memory(
     pool: &PgPool,
     requirement_id: &str,
     project_id: &str,
     snapshot: Option<Option<&Value>>,
-) -> Result<ContextRow, AppError> {
+) -> Result<MemoryRow, AppError> {
     let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM context WHERE requirement_id = $1")
+        sqlx::query_as("SELECT id FROM requirement_memory WHERE requirement_id = $1")
             .bind(requirement_id)
             .fetch_optional(pool)
             .await?;
@@ -430,16 +430,16 @@ pub async fn upsert_context(
     if let Some((id,)) = existing {
         let Some(value) = snapshot else {
             // 空 data：Prisma 退化纯读，不刷 updated_at。
-            let row = sqlx::query_as::<_, ContextRow>(&format!(
-                "SELECT {CONTEXT_COLS} FROM context WHERE id = $1"
+            let row = sqlx::query_as::<_, MemoryRow>(&format!(
+                "SELECT {MEMORY_COLS} FROM requirement_memory WHERE id = $1"
             ))
             .bind(&id)
             .fetch_one(pool)
             .await?;
             return Ok(row);
         };
-        let row = sqlx::query_as::<_, ContextRow>(&format!(
-            "UPDATE context SET snapshot = $2, updated_at = NOW() WHERE id = $1 RETURNING {CONTEXT_COLS}"
+        let row = sqlx::query_as::<_, MemoryRow>(&format!(
+            "UPDATE requirement_memory SET snapshot = $2, updated_at = NOW() WHERE id = $1 RETURNING {MEMORY_COLS}"
         ))
         .bind(&id)
         .bind(value.unwrap_or(&null_json))
@@ -453,9 +453,9 @@ pub async fn upsert_context(
             ));
         };
         let id = nanoid(12);
-        let row = sqlx::query_as::<_, ContextRow>(&format!(
-            "INSERT INTO context (id, requirement_id, project_id, snapshot, updated_at) \
-             VALUES ($1, $2, $3, $4, NOW()) RETURNING {CONTEXT_COLS}"
+        let row = sqlx::query_as::<_, MemoryRow>(&format!(
+            "INSERT INTO requirement_memory (id, requirement_id, project_id, snapshot, updated_at) \
+             VALUES ($1, $2, $3, $4, NOW()) RETURNING {MEMORY_COLS}"
         ))
         .bind(&id)
         .bind(requirement_id)
@@ -831,7 +831,7 @@ pub async fn check_completion_gate(
     .fetch_all(pool)
     .await?;
     let ctx: Option<(Value,)> =
-        sqlx::query_as("SELECT snapshot FROM context WHERE requirement_id = $1")
+        sqlx::query_as("SELECT snapshot FROM requirement_memory WHERE requirement_id = $1")
             .bind(requirement_id)
             .fetch_optional(pool)
             .await?;
@@ -870,7 +870,7 @@ pub async fn reset_requirement(
     let mut tx = pool.begin().await?;
     // 取 id 与 snapshot 两列：id 用于 UPDATE 定位，snapshot 用于保留 requirementSnapshot。
     let ctx: Option<(String, Value)> =
-        sqlx::query_as("SELECT id, snapshot FROM context WHERE requirement_id = $1")
+        sqlx::query_as("SELECT id, snapshot FROM requirement_memory WHERE requirement_id = $1")
             .bind(requirement_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -882,7 +882,7 @@ pub async fn reset_requirement(
         .map(|rs| json!({ "requirementSnapshot": rs }))
         .unwrap_or_else(|| json!({}));
     if let Some((id, _)) = ctx {
-        sqlx::query("UPDATE context SET snapshot = $2, updated_at = NOW() WHERE id = $1")
+        sqlx::query("UPDATE requirement_memory SET snapshot = $2, updated_at = NOW() WHERE id = $1")
             .bind(&id)
             .bind(&new_snapshot)
             .execute(&mut *tx)
@@ -890,7 +890,7 @@ pub async fn reset_requirement(
     } else {
         let id = nanoid(12);
         sqlx::query(
-            "INSERT INTO context (id, requirement_id, project_id, snapshot, updated_at) VALUES ($1, $2, $3, $4, NOW())",
+            "INSERT INTO requirement_memory (id, requirement_id, project_id, snapshot, updated_at) VALUES ($1, $2, $3, $4, NOW())",
         )
         .bind(&id)
         .bind(requirement_id)

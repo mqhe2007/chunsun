@@ -1,11 +1,11 @@
-//! 项目上下文文档 + 项目宪法的表访问
-//! （对齐 `projectContextDocumentRepository.ts` / `projectPolicyRepository.ts`）。
+//! 项目知识文档 + 项目宪法的表访问
+//! （对齐 `projectKnowledgeDocumentRepository.ts` / `projectPolicyRepository.ts`）。
 //!
 //! 兼容要点：
 //! - 两张表主键都是 `nanoid(12)`，`updated_at` 由应用层维护（Prisma `@updatedAt`）。
 //! - 列表排序固定 `sortOrder asc, createdAt desc`——**两级排序缺一不可**，
 //!   同 sortOrder 时新文档在前。
-//! - [`update_context_document`] 在「没有任何字段要写」时**不发 UPDATE**：
+//! - [`update_knowledge_document`] 在「没有任何字段要写」时**不发 UPDATE**：
 //!   Prisma 对空 `data` 会退化成纯读，`@updatedAt` 不刷新。实测确认
 //!   （`PUT {}` 间隔 1.3s 两次，`updatedAt` 逐字节相同），而同值写入
 //!   （`PUT {"title":"B"}` 写回原值）**照常刷新**。这个区别必须复刻。
@@ -22,7 +22,7 @@ fn now() -> DateTime<Utc> {
 }
 
 #[derive(Debug, Clone, FromRow)]
-pub struct ContextDocRow {
+pub struct KnowledgeDocRow {
     pub id: String,
     pub title: String,
     pub content: String,
@@ -79,15 +79,15 @@ pub async fn upsert_project_policy(
 }
 
 /// listContextDocuments：`orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }]`。
-pub async fn list_context_documents(
+pub async fn list_knowledge_documents(
     pool: &PgPool,
     project_id: &str,
-) -> Result<Vec<ContextDocRow>, AppError> {
+) -> Result<Vec<KnowledgeDocRow>, AppError> {
     let sql = format!(
-        "SELECT {DOC_COLS} FROM project_context_document WHERE project_id = $1 \
+        "SELECT {DOC_COLS} FROM project_knowledge_document WHERE project_id = $1 \
          ORDER BY sort_order ASC, created_at DESC"
     );
-    let rows = sqlx::query_as::<_, ContextDocRow>(&sql)
+    let rows = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
         .bind(project_id)
         .fetch_all(pool)
         .await?;
@@ -95,13 +95,13 @@ pub async fn list_context_documents(
 }
 
 /// `findFirst({ where: { id, projectId } })`：**双条件**，防止跨项目拿到别人的文档。
-pub async fn find_context_document(
+pub async fn find_knowledge_document(
     pool: &PgPool,
     project_id: &str,
     id: &str,
-) -> Result<Option<ContextDocRow>, AppError> {
-    let sql = format!("SELECT {DOC_COLS} FROM project_context_document WHERE id = $1 AND project_id = $2");
-    let row = sqlx::query_as::<_, ContextDocRow>(&sql)
+) -> Result<Option<KnowledgeDocRow>, AppError> {
+    let sql = format!("SELECT {DOC_COLS} FROM project_knowledge_document WHERE id = $1 AND project_id = $2");
+    let row = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
         .bind(id)
         .bind(project_id)
         .fetch_optional(pool)
@@ -113,14 +113,14 @@ pub async fn find_context_document(
 ///
 /// 注意 max 取的是**当前项目**内的最大值，且可能是负数（旧文档被手工改成 -5 时，
 /// 新文档就是 -4）——实测确认过递增基准就是这个 max，不是行数。
-pub async fn create_context_document(
+pub async fn create_knowledge_document(
     pool: &PgPool,
     project_id: &str,
     title: &str,
     content: &str,
-) -> Result<ContextDocRow, AppError> {
+) -> Result<KnowledgeDocRow, AppError> {
     let max: Option<i32> = sqlx::query_scalar(
-        "SELECT MAX(sort_order) FROM project_context_document WHERE project_id = $1",
+        "SELECT MAX(sort_order) FROM project_knowledge_document WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_one(pool)
@@ -133,11 +133,11 @@ pub async fn create_context_document(
 
     let ts = now();
     let sql = format!(
-        "INSERT INTO project_context_document \
+        "INSERT INTO project_knowledge_document \
            (id, project_id, title, content, sort_order, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING {DOC_COLS}"
     );
-    let row = sqlx::query_as::<_, ContextDocRow>(&sql)
+    let row = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
         .bind(nanoid(12))
         .bind(project_id)
         .bind(title.trim())
@@ -153,13 +153,13 @@ pub async fn create_context_document(
 ///
 /// 三个字段都是 `Option`：`None` = 请求里没这个 key = 不写。**全 None 时直接不发
 /// UPDATE**，对齐 Prisma 空 `data` 不刷新 `@updatedAt` 的行为。
-pub async fn update_context_document(
+pub async fn update_knowledge_document(
     pool: &PgPool,
-    existing: &ContextDocRow,
+    existing: &KnowledgeDocRow,
     title: Option<&str>,
     content: Option<&str>,
     sort_order: Option<i32>,
-) -> Result<ContextDocRow, AppError> {
+) -> Result<KnowledgeDocRow, AppError> {
     if title.is_none() && content.is_none() && sort_order.is_none() {
         return Ok(existing.clone());
     }
@@ -182,10 +182,10 @@ pub async fn update_context_document(
     idx += 1;
 
     let sql = format!(
-        "UPDATE project_context_document SET {} WHERE id = ${idx} RETURNING {DOC_COLS}",
+        "UPDATE project_knowledge_document SET {} WHERE id = ${idx} RETURNING {DOC_COLS}",
         sets.join(", ")
     );
-    let mut q = sqlx::query_as::<_, ContextDocRow>(&sql);
+    let mut q = sqlx::query_as::<_, KnowledgeDocRow>(&sql);
     if let Some(t) = title {
         // 旧仓储层的 `data.title.trim()`——路由层不 trim，trim 只在这里发生
         q = q.bind(t.trim().to_string());
@@ -201,8 +201,8 @@ pub async fn update_context_document(
 }
 
 /// deleteContextDocument 的删除部分（调用方已确认行存在）。
-pub async fn delete_context_document(pool: &PgPool, id: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM project_context_document WHERE id = $1")
+pub async fn delete_knowledge_document(pool: &PgPool, id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM project_knowledge_document WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;

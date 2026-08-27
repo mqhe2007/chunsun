@@ -284,7 +284,7 @@ async function fetchAll() {
       ),
       api
         .get<{ success: boolean; data: ContextRow }>(
-          `/projects/${projectId()}/requirements/${props.requirementId}/context`,
+          `/projects/${projectId()}/requirements/${props.requirementId}/memory`,
         )
         .catch(() => ({
           data: { success: false, data: null as unknown as ContextRow },

@@ -11,7 +11,7 @@ pub mod instance_config;
 pub mod invitation;
 pub mod notification;
 pub mod project;
-pub mod project_context;
+pub mod project_knowledge;
 pub mod project_env_var;
 pub mod project_member;
 pub mod project_secret_key;
