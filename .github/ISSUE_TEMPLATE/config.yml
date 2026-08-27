@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞披露
+    url: https://github.com/mengqinghe/chunsun/security
+    about: 请勿公开提 Issue 报告安全漏洞，请通过安全渠道私下披露。
+  - name: 提问与讨论
+    url: https://github.com/mengqinghe/chunsun/discussions
+    about: 使用问题与一般性讨论请前往 Discussions。

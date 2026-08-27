@@ -1,0 +1,47 @@
+name: 功能建议
+description: 提出一个新功能或改进建议
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的功能建议！请详细描述你的想法，以便我们评估和讨论。
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机与使用场景
+      description: 描述这个功能解决了什么问题，在什么场景下使用。
+      placeholder: |
+        我在使用春笋时遇到了...
+        我的使用场景是...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 描述你期望这个功能如何工作。
+      placeholder: 我期望...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 可选实现思路
+      description: 如果你有初步的实现想法或方案建议，请写在这里。
+      placeholder: 可以考虑...
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充说明
+      description: 任何其他相关信息，如参考链接、截图、类似产品的实现等。
+      placeholder: 其他说明...
+    validations:
+      required: false
