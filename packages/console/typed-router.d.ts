@@ -220,6 +220,20 @@ declare module 'vue-router/auto-routes' {
       { id: ParamValue<false> },
       | never
     >,
+    '/settings/notifications': RouteRecordInfo<
+      '/settings/notifications',
+      '/settings/notifications',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/settings/password': RouteRecordInfo<
+      '/settings/password',
+      '/settings/password',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/settings/profile': RouteRecordInfo<
       '/settings/profile',
       '/settings/profile',
@@ -458,6 +472,22 @@ declare module 'vue-router/auto-routes' {
     'src/pages/projects/[id]/settings/secret-key.vue': {
       routes:
         | '/projects/[id]/settings/secret-key'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/pages/settings/notifications.vue': {
+      routes:
+        | '/settings/notifications'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/pages/settings/password.vue': {
+      routes:
+        | '/settings/password'
       views:
         | never
       pathParamNames:
