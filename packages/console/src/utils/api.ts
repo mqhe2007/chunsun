@@ -67,7 +67,8 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (message === "CONTEXT_NOT_FOUND") {
+    // 尚无工作记忆是良性空状态（旧码 CONTEXT_NOT_FOUND，重命名后 MEMORY_NOT_FOUND）
+    if (message === "CONTEXT_NOT_FOUND" || message === "MEMORY_NOT_FOUND") {
       return Promise.reject(error);
     }
 

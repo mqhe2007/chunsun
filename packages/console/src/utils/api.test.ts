@@ -88,6 +88,13 @@ describe("api response interceptor", () => {
     expect(toastAdd).not.toHaveBeenCalled();
   });
 
+  test("MEMORY_NOT_FOUND 不弹错误 toast（重命名后的良性空状态）", async () => {
+    const err = makeError("MEMORY_NOT_FOUND");
+    await expect(rejected(err)).rejects.toBe(err);
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastAdd).not.toHaveBeenCalled();
+  });
+
   test("SETUP_REQUIRED 不弹 toast，交给路由去安装页", async () => {
     const err = makeError("SETUP_REQUIRED", 503);
     await expect(rejected(err)).rejects.toBe(err);
