@@ -90,6 +90,7 @@ pub async fn invite(
     is_platform_admin: bool,
     identifier: &str,
     role: Option<String>,
+    public_origin: &str,
 ) -> Result<InviteResult, AppError> {
     // 权限判定先于目标用户解析（对齐旧后端：403 优先于 404 USER_NOT_FOUND）。
     let allowed = project_access::can_project_action_db(
@@ -127,7 +128,9 @@ pub async fn invite(
                 .as_ref()
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| "未知项目".to_string());
-            let link = format!("/projects/{project_id}");
+            // 站内通知存相对路径（前端路由解析）；邮件必须是完整可访问 URL。
+            let relative_link = format!("/projects/{project_id}");
+            let email_link = format!("{public_origin}/console/projects/{project_id}");
             notify_user(
                 pool,
                 NotificationData {
@@ -135,7 +138,7 @@ pub async fn invite(
                     ty: "project_invitation".into(),
                     title: format!("你被邀请加入项目「{project_name}」"),
                     body: Some(format!("你已被邀请以 {role} 身份加入项目。")),
-                    link: Some(link.clone()),
+                    link: Some(relative_link),
                 },
             )
             .await?;
@@ -145,7 +148,7 @@ pub async fn invite(
                 &target.email,
                 &format!("你被邀请加入项目「{project_name}」"),
                 &format!("你已被邀请以 {role} 身份加入项目「{project_name}」。"),
-                &link,
+                &email_link,
             )
             .await;
             created

@@ -83,6 +83,7 @@ async fn invite(
         session.user.role == "ADMIN",
         &body.identifier,
         body.role,
+        &state.config().public_origin,
     )
     .await?;
     Ok(ok(member_dto(&res.member)))
