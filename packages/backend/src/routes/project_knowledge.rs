@@ -23,7 +23,7 @@
 //! `DELETE /knowledge/constitution` 没有静态路由，**会**命中并返回 400
 //! `CONSTITUTION_NOT_DELETABLE`。
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -31,6 +31,7 @@ use serde_json::{json, Map, Value};
 
 use crate::api::{ok, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
+use crate::core::datetime::to_value as dt_value;
 use crate::core::js_number::prisma_int;
 use crate::core::serde_ext::double_option;
 use crate::repos::project_knowledge as ctx_repo;
@@ -61,6 +62,8 @@ pub struct CreateKnowledgeBody {
     pub title: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub content: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub load_strategy: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +75,14 @@ pub struct UpdateKnowledgeBody {
     pub content: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub sort_order: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub load_strategy: Option<Option<String>>,
+}
+
+/// `GET /knowledge/documents?strategy=eager|lazy` 的 query 参数
+#[derive(Debug, Deserialize)]
+pub struct ListKnowledgeQuery {
+    pub strategy: Option<String>,
 }
 
 fn is_admin(session: &crate::auth::AuthSession) -> bool {
@@ -98,10 +109,38 @@ async fn list_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
+    Query(query): Query<ListKnowledgeQuery>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
-    let contexts = list_project_knowledge(&state.pool(), &pid).await?;
+    let strategy = query.strategy.as_deref();
+    // 校验 strategy 值
+    if let Some(s) = strategy {
+        if s != "eager" && s != "lazy" {
+            return Err(AppError::bad_request("INVALID_LOAD_STRATEGY"));
+        }
+    }
+    let contexts = list_project_knowledge(&state.pool(), &pid, strategy).await?;
     Ok(ok(json!({ "contexts": contexts })))
+}
+
+/// `GET /knowledge/documents/:docId`：单条文档查询（含宪法）。
+///
+/// 宪法走静态路由 `/knowledge/constitution` 的 GET，这里只处理自定义文档。
+async fn get_knowledge_doc(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path((project_id, doc_id)): Path<(String, String)>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let pid = visible(&state, &session, &project_id).await?;
+    if doc_id == "constitution" {
+        // 宪法走单独的静态路由，这里不应命中（axum 静态段优先）
+        return Err(AppError::bad_request("USE_CONSTITUTION_ENDPOINT"));
+    }
+    let doc = ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id).await?;
+    let Some(doc) = doc else {
+        return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
+    };
+    Ok(ok(knowledge_doc_dto(&doc)))
 }
 
 async fn put_constitution(
@@ -131,6 +170,14 @@ async fn create_knowledge(
     let pid = visible(&state, &session, &project_id).await?;
     let title = required_string("title", &body.title, TITLE_MIN, TITLE_MAX)?;
     let content = optional_string("content", &body.content, CONTENT_MIN, CONTENT_MAX)?;
+    let load_strategy = optional_string("loadStrategy", &body.load_strategy, 0, 16)?;
+
+    // 校验 loadStrategy 值
+    if let Some(ls) = load_strategy {
+        if ls != "eager" && ls != "lazy" {
+            return Err(AppError::bad_request("INVALID_LOAD_STRATEGY"));
+        }
+    }
 
     // minLength=1 只拦空串，纯空格要靠这里的 trim 判空 → 400（不是 422）
     let title = title.trim();
@@ -139,7 +186,7 @@ async fn create_knowledge(
     }
 
     let doc =
-        ctx_repo::create_knowledge_document(&state.pool(), &pid, title, content.unwrap_or("")).await?;
+        ctx_repo::create_knowledge_document(&state.pool(), &pid, title, content.unwrap_or(""), load_strategy).await?;
     Ok(ok(knowledge_doc_dto(&doc)))
 }
 
@@ -157,6 +204,15 @@ async fn update_knowledge(
     let title = optional_string("title", &body.title, TITLE_MIN, TITLE_MAX)?;
     let content = optional_string("content", &body.content, CONTENT_MIN, CONTENT_MAX)?;
     let sort_order = optional_number("sortOrder", &body.sort_order)?;
+    let load_strategy = optional_string("loadStrategy", &body.load_strategy, 0, 16)?;
+
+    // 校验 loadStrategy 值
+    if let Some(ls) = load_strategy {
+        if ls != "eager" && ls != "lazy" {
+            return Err(AppError::bad_request("INVALID_LOAD_STRATEGY"));
+        }
+    }
+
     let sort_order = match sort_order {
         // 越界的 sortOrder 在旧后端是 Prisma 未捕获异常 → 500
         Some(n) => Some(prisma_int(n).map_err(|_| {
@@ -174,7 +230,7 @@ async fn update_knowledge(
     };
 
     let doc =
-        ctx_repo::update_knowledge_document(&state.pool(), &existing, title, content, sort_order)
+        ctx_repo::update_knowledge_document(&state.pool(), &existing, title, content, sort_order, load_strategy)
             .await?;
     Ok(ok(knowledge_doc_dto(&doc)))
 }
@@ -226,6 +282,37 @@ fn by_status_map(groups: &[(String, i64)]) -> Value {
     Value::Object(map)
 }
 
+/// `GET /knowledge/index`：知识目录（所有文档元信息，不含正文）。
+///
+/// 固定 eager 加载，Agent 启动时拉取，用于感知有哪些 lazy 文档可按需拉取。
+/// 返回字段：key / title / system / loadStrategy，**不含 content**。
+async fn get_knowledge_index(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let pid = visible(&state, &session, &project_id).await?;
+    let docs = ctx_repo::list_knowledge_documents(&state.pool(), &pid, None).await?;
+
+    let mut items = Vec::with_capacity(docs.len() + 1);
+    // 宪法恒为 eager，固定包含
+    items.push(json!({
+        "key": "constitution",
+        "title": "项目宪法",
+        "system": true,
+        "loadStrategy": "eager",
+    }));
+    for doc in &docs {
+        items.push(json!({
+            "key": doc.id,
+            "title": doc.title,
+            "system": false,
+            "loadStrategy": doc.load_strategy,
+        }));
+    }
+    Ok(ok(json!({ "index": items })))
+}
+
 async fn get_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
@@ -243,7 +330,7 @@ async fn get_knowledge(
 
     let req_counts = count_requirements_by_status(&state.pool(), &project.id).await?;
     let env_var_count = count_env_vars_by_project(&state.pool(), &project.id).await?;
-    let contexts = list_project_knowledge(&state.pool(), &project.id).await?;
+    let contexts = list_project_knowledge(&state.pool(), &project.id, None).await?;
 
     let total: i64 = req_counts.iter().map(|(_, c)| c).sum();
 
@@ -266,8 +353,30 @@ async fn get_knowledge(
     })))
 }
 
+/// `GET /knowledge/constitution`：获取项目宪法。
+async fn get_constitution(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let pid = visible(&state, &session, &project_id).await?;
+    let policy = ctx_repo::get_project_policy(&state.pool(), &pid).await?;
+    let constitution = policy.as_ref().map_or("", |p| p.constitution_md.as_str());
+    let updated_at = policy.as_ref().map(|p| p.updated_at);
+    Ok(ok(json!({
+        "key": "constitution",
+        "title": "项目宪法",
+        "content": constitution,
+        "system": true,
+        "loadStrategy": "eager",
+        "updatedAt": updated_at.map(|t| dt_value(&t)),
+    })))
+}
+
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        // 知识目录（所有文档元信息，不含正文，固定 eager 加载）
+        .route("/projects/{projectId}/knowledge/index", get(get_knowledge_index))
         // 项目知识概览（含项目信息、需求/环境变量统计、知识文档列表）
         .route("/projects/{projectId}/knowledge", get(get_knowledge))
         // 知识文档 CRUD
@@ -275,8 +384,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/projects/{projectId}/knowledge/documents", post(create_knowledge))
         .route(
             "/projects/{projectId}/knowledge/constitution",
-            put(put_constitution).delete(delete_constitution),
+            get(get_constitution).put(put_constitution).delete(delete_constitution),
         )
+        .route("/projects/{projectId}/knowledge/documents/{docId}", get(get_knowledge_doc))
         .route("/projects/{projectId}/knowledge/documents/{docId}", put(update_knowledge))
         .route(
             "/projects/{projectId}/knowledge/documents/{docId}",

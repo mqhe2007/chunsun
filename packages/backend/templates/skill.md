@@ -74,12 +74,17 @@ argument-hint: '<requirement-id>'
 /chunsun <需求ID>
   1. 拉取上下文：chunsun requirement memory get <ID> + chunsun scenario list <ID> --include-cases
      + 当前 Git 状态 + 环境变量（chunsun env list）
+     + 项目知识目录（所有文档元信息，不含正文）：chunsun knowledge index --json
+     + 项目知识（仅 eager 文档正文）：chunsun knowledge --strategy eager --json
+     （知识目录用于感知有哪些 lazy 文档可按需拉取；lazy 文档正文不在启动时加载）
   2. 开新 Run：chunsun run start <ID>
      - 若报已有 Run 在跑（撞锁）：向用户展示最后活跃时间，用户确认后
        chunsun run takeover <ID>（僵尸 Run 人工接管），再 start
   3. 进入循环：
      a. 决策下一步 Step kind（think / code / test / verify / ask_user / info / reflect）
      b. 执行 Step；涉及验收变化时 upsert 场景/用例并回写状态
+        - 若需要某 lazy 知识文档的内容：chunsun knowledge doc <docId> --json 按需拉取
+          （不要在启动时全量加载 lazy 文档，避免长上下文项目爆 prompt）
      c. 每个 Step 完成即上报：chunsun step add <ID> --run <runId> --kind ... --summary ...
      d. 柔性约束（规则提醒层，进下一轮 prompt 前调用 chunsun run remind <ID>）：
         - 尚无任何场景 → 至少 upsert 一个 happy path 场景
@@ -108,6 +113,21 @@ argument-hint: '<requirement-id>'
 - `envRefs`：引用的环境变量 key
 
 **粒度严控**（整体 ~20k 字符内）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+
+## Knowledge（项目知识，按需渐进式披露）
+
+项目级知识文档（宪法 + 自定义文档）分两种加载策略，在项目设置中配置：
+
+- **eager（默认）**：harness 启动时全量加载进 prompt，适合核心规则、编码规范等每次都需要的内容。
+- **lazy**：启动时不加载正文，由 Agent 在循环中判断需要后单条拉取（`chunsun knowledge doc <docId>`），适合参考资料、API 文档等不常用但可能需要的长文档。
+
+**宪法恒为 eager**，不可改为 lazy（系统固定项，启动时必须加载）。
+
+### 知识目录（固定 eager）
+
+启动时除了拉取 eager 文档正文，还会拉取**知识目录**（`chunsun knowledge index`）：包含所有文档（含 lazy）的元信息 `key / title / system / loadStrategy`，**不含正文**。
+
+Agent 通过知识目录感知有哪些 lazy 文档可用，在循环中遇到相关场景时主动单条拉取正文，不要在启动时预加载所有 lazy 文档。
 
 ## 验收定义（passing 的标准）
 

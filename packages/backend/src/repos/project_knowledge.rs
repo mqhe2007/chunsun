@@ -27,6 +27,7 @@ pub struct KnowledgeDocRow {
     pub title: String,
     pub content: String,
     pub sort_order: i32,
+    pub load_strategy: String,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -36,7 +37,7 @@ pub struct ProjectPolicyRow {
     pub updated_at: DateTime<Utc>,
 }
 
-const DOC_COLS: &str = "id, title, content, sort_order, created_at, updated_at";
+const DOC_COLS: &str = "id, title, content, sort_order, load_strategy, created_at, updated_at";
 
 /// getProjectPolicy：`findUnique({ where: { projectId } })`，缺行返回 None（**不建行**）。
 pub async fn get_project_policy(
@@ -79,18 +80,35 @@ pub async fn upsert_project_policy(
 }
 
 /// listContextDocuments：`orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }]`。
+///
+/// `strategy` 为 None 时返回全部；为 Some("eager") / Some("lazy") 时按加载策略过滤。
 pub async fn list_knowledge_documents(
     pool: &PgPool,
     project_id: &str,
+    strategy: Option<&str>,
 ) -> Result<Vec<KnowledgeDocRow>, AppError> {
-    let sql = format!(
-        "SELECT {DOC_COLS} FROM project_knowledge_document WHERE project_id = $1 \
-         ORDER BY sort_order ASC, created_at DESC"
-    );
-    let rows = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
+    let (sql, binds) = if let Some(s) = strategy {
+        (
+            format!(
+                "SELECT {DOC_COLS} FROM project_knowledge_document WHERE project_id = $1 AND load_strategy = $2 \
+                 ORDER BY sort_order ASC, created_at DESC"
+            ),
+            vec![s.to_string()],
+        )
+    } else {
+        (
+            format!(
+                "SELECT {DOC_COLS} FROM project_knowledge_document WHERE project_id = $1 \
+                 ORDER BY sort_order ASC, created_at DESC"
+            ),
+            vec![],
+        )
+    };
+    let mut q = sqlx::query_as::<_, KnowledgeDocRow>(&sql).bind(project_id);
+    for b in &binds {
+        q = q.bind(b);
+    }
+    let rows = q.fetch_all(pool).await?;
     Ok(rows)
 }
 
@@ -113,11 +131,14 @@ pub async fn find_knowledge_document(
 ///
 /// 注意 max 取的是**当前项目**内的最大值，且可能是负数（旧文档被手工改成 -5 时，
 /// 新文档就是 -4）——实测确认过递增基准就是这个 max，不是行数。
+///
+/// `load_strategy` 为 None 时默认 'eager'。
 pub async fn create_knowledge_document(
     pool: &PgPool,
     project_id: &str,
     title: &str,
     content: &str,
+    load_strategy: Option<&str>,
 ) -> Result<KnowledgeDocRow, AppError> {
     let max: Option<i32> = sqlx::query_scalar(
         "SELECT MAX(sort_order) FROM project_knowledge_document WHERE project_id = $1",
@@ -131,11 +152,12 @@ pub async fn create_knowledge_document(
         AppError::internal("SORT_ORDER_OVERFLOW: max sortOrder is already i32::MAX")
     })?;
 
+    let strategy = load_strategy.unwrap_or("eager");
     let ts = now();
     let sql = format!(
         "INSERT INTO project_knowledge_document \
-           (id, project_id, title, content, sort_order, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING {DOC_COLS}"
+           (id, project_id, title, content, sort_order, load_strategy, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING {DOC_COLS}"
     );
     let row = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
         .bind(nanoid(12))
@@ -143,6 +165,7 @@ pub async fn create_knowledge_document(
         .bind(title.trim())
         .bind(content)
         .bind(sort_order)
+        .bind(strategy)
         .bind(ts)
         .fetch_one(pool)
         .await?;
@@ -151,7 +174,7 @@ pub async fn create_knowledge_document(
 
 /// updateContextDocument 的写入部分（调用方已确认行存在）。
 ///
-/// 三个字段都是 `Option`：`None` = 请求里没这个 key = 不写。**全 None 时直接不发
+/// 四个字段都是 `Option`：`None` = 请求里没这个 key = 不写。**全 None 时直接不发
 /// UPDATE**，对齐 Prisma 空 `data` 不刷新 `@updatedAt` 的行为。
 pub async fn update_knowledge_document(
     pool: &PgPool,
@@ -159,8 +182,9 @@ pub async fn update_knowledge_document(
     title: Option<&str>,
     content: Option<&str>,
     sort_order: Option<i32>,
+    load_strategy: Option<&str>,
 ) -> Result<KnowledgeDocRow, AppError> {
-    if title.is_none() && content.is_none() && sort_order.is_none() {
+    if title.is_none() && content.is_none() && sort_order.is_none() && load_strategy.is_none() {
         return Ok(existing.clone());
     }
 
@@ -176,6 +200,10 @@ pub async fn update_knowledge_document(
     }
     if sort_order.is_some() {
         sets.push(format!("sort_order = ${idx}"));
+        idx += 1;
+    }
+    if load_strategy.is_some() {
+        sets.push(format!("load_strategy = ${idx}"));
         idx += 1;
     }
     sets.push(format!("updated_at = ${idx}"));
@@ -195,6 +223,9 @@ pub async fn update_knowledge_document(
     }
     if let Some(s) = sort_order {
         q = q.bind(s);
+    }
+    if let Some(ls) = load_strategy {
+        q = q.bind(ls.to_string());
     }
     let row = q.bind(now()).bind(&existing.id).fetch_one(pool).await?;
     Ok(row)

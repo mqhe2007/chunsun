@@ -20,6 +20,7 @@ type ContextItem = {
   title: string;
   content: string;
   system: boolean;
+  loadStrategy?: string;
 };
 
 type ContextsPayload = {
@@ -31,6 +32,7 @@ type ContextRow = {
   title: string;
   content: string;
   system: boolean;
+  loadStrategy?: string;
   preview: string;
 };
 
@@ -46,6 +48,7 @@ const dialogOpen = ref(false);
 const editingKey = ref<string | null>(null);
 const formTitle = ref("");
 const formContent = ref("");
+const formLoadStrategy = ref<"eager" | "lazy">("eager");
 
 const projectId = () => (route.params as Record<string, string>).id;
 
@@ -97,6 +100,7 @@ function openCreate() {
   editingKey.value = null;
   formTitle.value = "";
   formContent.value = "";
+  formLoadStrategy.value = "eager";
   dialogOpen.value = true;
 }
 
@@ -104,6 +108,7 @@ function openEdit(row: ContextRow) {
   editingKey.value = row.key;
   formTitle.value = row.system ? CONSTITUTION_TITLE : row.title;
   formContent.value = row.content;
+  formLoadStrategy.value = (row.loadStrategy as "eager" | "lazy") || "eager";
   dialogOpen.value = true;
 }
 
@@ -122,7 +127,7 @@ async function saveDoc() {
     if (editingKey.value === null) {
       const res = await api.post<{ success: boolean }>(
         `/projects/${projectId()}/knowledge/documents`,
-        { title, content: formContent.value },
+        { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
       );
       if (!res.data.success) throw new Error("create failed");
     } else if (isEditingConstitution.value) {
@@ -134,7 +139,7 @@ async function saveDoc() {
     } else {
       const res = await api.put<{ success: boolean }>(
         `/projects/${projectId()}/knowledge/documents/${editingKey.value}`,
-        { title, content: formContent.value },
+        { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
       );
       if (!res.data.success) throw new Error("update failed");
     }
@@ -210,6 +215,18 @@ onMounted(fetchContexts);
           <span class="preview-cell">{{ (row as ContextRow).preview }}</span>
         </template>
       </AppColumn>
+      <AppColumn header="加载策略" width="6rem">
+        <template #default="{ row }">
+          <span
+            :class="[
+              'badge',
+              (row as ContextRow).loadStrategy === 'lazy' ? 'badge-warning' : 'badge-success',
+            ]"
+          >
+            {{ (row as ContextRow).loadStrategy === 'lazy' ? '按需' : '启动' }}
+          </span>
+        </template>
+      </AppColumn>
       <AppColumn header="操作" width="7rem">
         <template #default="{ row }">
           <div class="row-actions">
@@ -267,6 +284,19 @@ onMounted(fetchContexts);
                 : 'Markdown 正文…'
             "
           />
+        </AppField>
+        <AppField v-if="!isEditingConstitution" label="加载策略" html-for="ctx-strategy">
+          <select
+            id="ctx-strategy"
+            v-model="formLoadStrategy"
+            class="select w-full"
+          >
+            <option value="eager">启动时加载（默认，适合核心规则）</option>
+            <option value="lazy">按需加载（适合参考资料、长文档）</option>
+          </select>
+          <p class="hint text-base-content/60">
+            启动时加载：harness 启动时全量进入 prompt；按需加载：由 Agent 在需要时单条拉取，降低长上下文项目的 prompt 占用。
+          </p>
         </AppField>
       </div>
       <template #footer>
