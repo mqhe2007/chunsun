@@ -27,6 +27,7 @@ use crate::repos::project_env_var::{
     self, CreateEnvVarInput, ProjectEnvVarRow, UpdateEnvVarPatch,
 };
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
+use crate::services::notification::{notify, NotifyRequest, project_member_user_ids};
 use crate::services::project_access::can_project_action_db;
 
 /// 环境变量键名规则：`/^[A-Z][A-Z0-9_]*$/`（大写字母开头，后接大写字母/数字/下划线）。
@@ -180,6 +181,7 @@ pub async fn create_env_var(
     crypto: EnvCrypto<'_>,
     project_id: &str,
     req: CreateEnvVarRequest<'_>,
+    public_origin: &str,
 ) -> Result<ProjectEnvVarRow, AppError> {
     assert_can_write_env_var(pool, caller, project_id).await?;
 
@@ -221,6 +223,9 @@ pub async fn create_env_var(
     )
     .await?;
 
+    notify_env_var_changed(pool, public_origin, project_id, caller.user_id, &row.key, "创建")
+        .await?;
+
     Ok(row)
 }
 
@@ -245,6 +250,7 @@ pub async fn update_env_var(
     project_id: &str,
     var_id: &str,
     req: UpdateEnvVarRequest<'_>,
+    public_origin: &str,
 ) -> Result<ProjectEnvVarRow, AppError> {
     assert_can_write_env_var(pool, caller, project_id).await?;
 
@@ -313,6 +319,9 @@ pub async fn update_env_var(
     )
     .await?;
 
+    notify_env_var_changed(pool, public_origin, project_id, caller.user_id, &row.key, "更新")
+        .await?;
+
     Ok(row)
 }
 
@@ -321,6 +330,7 @@ pub async fn delete_env_var(
     caller: Caller<'_>,
     project_id: &str,
     var_id: &str,
+    public_origin: &str,
 ) -> Result<(), AppError> {
     assert_can_write_env_var(pool, caller, project_id).await?;
 
@@ -344,7 +354,42 @@ pub async fn delete_env_var(
     )
     .await?;
 
+    notify_env_var_changed(
+        pool,
+        public_origin,
+        project_id,
+        caller.user_id,
+        &existing.key,
+        "删除",
+    )
+    .await?;
+
     Ok(())
+}
+
+async fn notify_env_var_changed(
+    pool: &PgPool,
+    public_origin: &str,
+    project_id: &str,
+    actor_user_id: &str,
+    key: &str,
+    action: &str,
+) -> Result<(), AppError> {
+    let recipients = project_member_user_ids(pool, project_id).await?;
+    notify(
+        pool,
+        public_origin,
+        NotifyRequest {
+            event: "env_var_changed".into(),
+            recipient_user_ids: recipients,
+            actor_user_id: Some(actor_user_id.to_string()),
+            title: format!("项目环境变量已{action}"),
+            body: Some(format!("环境变量 {key} 已{action}。")),
+            link: Some(format!("/projects/{project_id}/settings/env-vars")),
+            email_link: None,
+        },
+    )
+    .await
 }
 
 /// `auditMeta`：写进活动日志的元数据，**只记键名与标记，绝不记值**。

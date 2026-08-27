@@ -22,6 +22,7 @@ use crate::repos::requirement::{
     UpdateRequirementPatch,
 };
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
+use crate::services::notification::{notify, NotifyRequest};
 use crate::services::project_access::visible_project_id;
 
 /// 需求域的失败分支。
@@ -201,11 +202,14 @@ pub async fn update_requirement(
     user_id: &str,
     is_admin: bool,
     args: UpdateRequirementArgs<'_>,
+    public_origin: &str,
 ) -> Result<RequirementRow, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
 
     // 注意：成员校验在存在性检查之前，顺序照搬旧实现
     assert_owner_is_member(pool, &project_id, args.owner_id.flatten()).await?;
+
+    let previous = requirement::get_requirement_by_id(pool, requirement_id, &project_id).await?;
 
     // `ownerId: ""` 在旧实现里走 `disconnect` 分支，等价于置 NULL
     let owner_patch = args
@@ -246,6 +250,37 @@ pub async fn update_requirement(
         },
     )
     .await?;
+
+    if let Some(prev) = previous {
+        if prev.owner_id != row.owner_id {
+            let mut recipients = Vec::new();
+            if let Some(old) = prev.owner_id {
+                recipients.push(old);
+            }
+            if let Some(new) = row.owner_id.clone() {
+                recipients.push(new);
+            }
+            if !recipients.is_empty() {
+                notify(
+                    pool,
+                    public_origin,
+                    NotifyRequest {
+                        event: "requirement_owner_changed".into(),
+                        recipient_user_ids: recipients,
+                        actor_user_id: Some(user_id.to_string()),
+                        title: "需求负责人已变更".into(),
+                        body: Some(format!("需求「{}」的负责人已更新。", row.description)),
+                        link: Some(format!(
+                            "/projects/{}/requirements/{}",
+                            project_id, row.id
+                        )),
+                        email_link: None,
+                    },
+                )
+                .await?;
+            }
+        }
+    }
 
     Ok(row)
 }

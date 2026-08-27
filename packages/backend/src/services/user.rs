@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use crate::api::AppError;
 use crate::core::password::{hash_password, verify_password};
 use crate::repos::user;
-use crate::services::notification::{notify_user, NotificationData};
+use crate::services::notification::{notify, NotifyRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserFailure {
@@ -75,6 +75,7 @@ pub async fn change_password(
     pool: &PgPool,
     user_id: &str,
     input: ChangePasswordInput,
+    public_origin: &str,
 ) -> Result<(), AppError> {
     let found = user::get_user_by_id(pool, user_id)
         .await?
@@ -85,14 +86,17 @@ pub async fn change_password(
     let password_hash = hash_password(&input.new_password)?;
     user::update_user_password(pool, user_id, &password_hash).await?;
 
-    notify_user(
+    notify(
         pool,
-        NotificationData {
-            user_id: user_id.to_string(),
-            ty: "password_changed".into(),
+        public_origin,
+        NotifyRequest {
+            event: "password_changed".into(),
+            recipient_user_ids: vec![user_id.to_string()],
+            actor_user_id: None,
             title: "密码已修改".into(),
             body: Some("你的账户密码刚刚被修改。如非本人操作，请立即联系管理员。".into()),
-            link: None,
+            link: Some("/settings/profile".into()),
+            email_link: None,
         },
     )
     .await?;

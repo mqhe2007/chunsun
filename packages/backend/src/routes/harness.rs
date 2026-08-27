@@ -31,6 +31,9 @@ use crate::repos::harness::{
 };
 use crate::repos::project::get_project_by_id;
 use crate::repos::requirement::get_requirement_by_id;
+use crate::services::notification::{
+    delivery_recipient, notify, open_decisions_len, NotifyRequest,
+};
 use crate::state::AppState;
 
 // ---------- 路径 / 查询 / 请求体 ----------
@@ -365,6 +368,63 @@ async fn patch_run(
     let Some(updated) = updated else {
         return Err(AppError::not_found("RUN_NOT_FOUND"));
     };
+
+    let terminal_event = match body.status.as_str() {
+        "completed" => Some("run_completed"),
+        "finished" => Some("run_finished"),
+        "abandoned" => Some("run_abandoned"),
+        _ => None,
+    };
+    if let Some(event) = terminal_event {
+        if let Some(recipient) =
+            delivery_recipient(&state.pool(), &p.requirement_id, &p.project_id).await?
+        {
+            let title = match event {
+                "run_completed" => "轮次已完成（验收通过）",
+                "run_finished" => "轮次已正常收尾",
+                "run_abandoned" => "轮次已放弃",
+                _ => "轮次状态已变更",
+            };
+            let link = format!(
+                "/projects/{}/requirements/{}",
+                p.project_id, p.requirement_id
+            );
+            notify(
+                &state.pool(),
+                &state.config().public_origin,
+                NotifyRequest {
+                    event: event.into(),
+                    recipient_user_ids: vec![recipient.clone()],
+                    actor_user_id: Some(session.user.user_id.clone()),
+                    title: title.into(),
+                    body: body.end_reason.clone().or_else(|| {
+                        Some(format!("需求 {} 的轮次状态已更新为 {}。", p.requirement_id, body.status))
+                    }),
+                    link: Some(link.clone()),
+                    email_link: None,
+                },
+            )
+            .await?;
+
+            if event == "run_completed" {
+                notify(
+                    &state.pool(),
+                    &state.config().public_origin,
+                    NotifyRequest {
+                        event: "defect_auto_resolved".into(),
+                        recipient_user_ids: vec![recipient],
+                        actor_user_id: Some(session.user.user_id.clone()),
+                        title: "关联缺陷已自动解决".into(),
+                        body: Some("关联未关闭缺陷已自动标记为已解决".into()),
+                        link: Some(format!("/projects/{}/defects", p.project_id)),
+                        email_link: None,
+                    },
+                )
+                .await?;
+            }
+        }
+    }
+
     Ok(ok_val(run_dto(&updated)))
 }
 
@@ -440,9 +500,40 @@ async fn put_memory(
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
+    let prev_open = get_memory(&state.pool(), &p.requirement_id, &p.project_id)
+        .await?
+        .map(|m| open_decisions_len(&m.snapshot))
+        .unwrap_or(0);
     // 三态原样下传，缺失/显式 null 的分叉由仓储层按 update / create 路径各自复刻。
     let snapshot = body.snapshot.as_ref().map(|v| v.as_ref());
     let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, snapshot).await?;
+    let now_open = open_decisions_len(&ctx.snapshot);
+    if prev_open == 0 && now_open > 0 {
+        if let Some(recipient) =
+            delivery_recipient(&state.pool(), &p.requirement_id, &p.project_id).await?
+        {
+            notify(
+                &state.pool(),
+                &state.config().public_origin,
+                NotifyRequest {
+                    event: "run_needs_decision".into(),
+                    recipient_user_ids: vec![recipient],
+                    actor_user_id: Some(session.user.user_id.clone()),
+                    title: "轮次需要你决策".into(),
+                    body: Some(format!(
+                        "需求 {} 出现待决策项，请尽快处理。",
+                        p.requirement_id
+                    )),
+                    link: Some(format!(
+                        "/projects/{}/requirements/{}",
+                        p.project_id, p.requirement_id
+                    )),
+                    email_link: None,
+                },
+            )
+            .await?;
+        }
+    }
     Ok(ok_val(memory_dto(&ctx)))
 }
 
@@ -456,6 +547,27 @@ async fn reset_requirement_handler(
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
     let run = reset_requirement(&state.pool(), &p.requirement_id, &p.project_id).await?;
+    if let Some(recipient) =
+        delivery_recipient(&state.pool(), &p.requirement_id, &p.project_id).await?
+    {
+        notify(
+            &state.pool(),
+            &state.config().public_origin,
+            NotifyRequest {
+                event: "requirement_reset".into(),
+                recipient_user_ids: vec![recipient],
+                actor_user_id: Some(session.user.user_id.clone()),
+                title: "需求已重置".into(),
+                body: Some(format!("需求 {} 已重置并开启新轮次。", p.requirement_id)),
+                link: Some(format!(
+                    "/projects/{}/requirements/{}",
+                    p.project_id, p.requirement_id
+                )),
+                email_link: None,
+            },
+        )
+        .await?;
+    }
     Ok(created_val(json!({ "run": run_dto(&run) })))
 }
 

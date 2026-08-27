@@ -246,6 +246,7 @@ async fn update(
             released_at,
             owner_id,
         },
+        &state.config().public_origin,
     )
     .await?;
 

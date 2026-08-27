@@ -136,7 +136,7 @@ async fn verify_email(
     if body.token.is_empty() {
         return Err(AppError::unprocessable("VALIDATION_ERROR").with_message("token 不能为空"));
     }
-    auth_service::verify_email(&state.pool(), &body.token).await?;
+    auth_service::verify_email(&state.pool(), &state.config(), &body.token).await?;
     Ok(Json(ApiResponse::ok_no_data()))
 }
 
@@ -166,7 +166,8 @@ async fn reset_password(
         return Err(AppError::unprocessable("VALIDATION_ERROR").with_message("token 不能为空"));
     }
     check_len("newPassword", &body.new_password, 6, 100)?;
-    auth_service::reset_password(&state.pool(), &body.token, &body.new_password).await?;
+    auth_service::reset_password(&state.pool(), &state.config(), &body.token, &body.new_password)
+        .await?;
     Ok(Json(ApiResponse::ok_no_data()))
 }
 

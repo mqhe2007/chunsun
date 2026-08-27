@@ -14,6 +14,7 @@ use crate::api::{ok, ok_with_meta, ApiResponse, AppError, ValidatedJson};
 use crate::auth::{AdminUser, CurrentUser};
 use crate::core::datetime::to_value as dt_value;
 use crate::repos::user::User;
+use crate::services::notification as notification_service;
 use crate::services::user as user_service;
 use crate::state::AppState;
 
@@ -211,9 +212,42 @@ async fn change_password(
             current_password: body.current_password,
             new_password: body.new_password,
         },
+        &state.config().public_origin,
     )
     .await?;
     Ok(ok(json!({ "message": "Password changed successfully" })))
+}
+
+async fn get_notification_preferences(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let data =
+        notification_service::preferences_dto(&state.pool(), &session.user.user_id).await?;
+    Ok(ok(data))
+}
+
+async fn patch_notification_preferences(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    ValidatedJson(body): ValidatedJson<notification_service::PreferencesPatch>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let data = notification_service::patch_preferences(
+        &state.pool(),
+        &session.user.user_id,
+        body,
+    )
+    .await?;
+    Ok(ok(data))
+}
+
+async fn reset_notification_preferences(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let data =
+        notification_service::reset_preferences(&state.pool(), &session.user.user_id).await?;
+    Ok(ok(data))
 }
 
 async fn search(
@@ -316,6 +350,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/me", get(me))
         .route("/me/profile", patch(update_profile))
         .route("/me/change-password", post(change_password))
+        .route(
+            "/me/notification-preferences",
+            get(get_notification_preferences).patch(patch_notification_preferences),
+        )
+        .route(
+            "/me/notification-preferences/reset",
+            post(reset_notification_preferences),
+        )
         .route("/search", get(search))
         .route("/admin/list", get(admin_list))
         .route("/admin/create", post(admin_create))

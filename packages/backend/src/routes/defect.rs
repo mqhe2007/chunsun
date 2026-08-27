@@ -141,6 +141,7 @@ async fn create(
             severity,
             requirement_id,
         },
+        &state.config().public_origin,
     )
     .await?;
 
@@ -189,6 +190,7 @@ async fn update(
             severity,
             requirement_id,
         },
+        &state.config().public_origin,
     )
     .await?;
 
@@ -222,6 +224,7 @@ async fn convert(
         &project_id,
         &session.user.user_id,
         session.user.role == "ADMIN",
+        &state.config().public_origin,
     )
     .await?;
 

@@ -19,6 +19,7 @@ use crate::repos::defect::{
 };
 use crate::repos::requirement::{self, CreateRequirementInput, RequirementRow};
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
+use crate::services::notification::{defect_recipient, notify, NotifyRequest};
 use crate::services::project_access::visible_project_id;
 
 /// 缺陷域的失败分支。
@@ -113,6 +114,7 @@ pub async fn create_defect(
     user_id: &str,
     is_admin: bool,
     args: CreateDefectArgs<'_>,
+    public_origin: &str,
 ) -> Result<DefectRow, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
 
@@ -142,6 +144,25 @@ pub async fn create_defect(
         },
     )
     .await?;
+
+    if let Some(recipient) =
+        defect_recipient(pool, &project_id, row.requirement_id.as_deref()).await?
+    {
+        notify(
+            pool,
+            public_origin,
+            NotifyRequest {
+                event: "defect_created".into(),
+                recipient_user_ids: vec![recipient],
+                actor_user_id: Some(user_id.to_string()),
+                title: "新缺陷已创建".into(),
+                body: Some(format!("缺陷：{desc}")),
+                link: Some(format!("/projects/{project_id}/defects")),
+                email_link: None,
+            },
+        )
+        .await?;
+    }
 
     Ok(row)
 }
@@ -176,8 +197,13 @@ pub async fn update_defect(
     user_id: &str,
     is_admin: bool,
     args: UpdateDefectArgs<'_>,
+    public_origin: &str,
 ) -> Result<DefectRow, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+
+    let before = defect::get_defect_by_id(pool, defect_id, &project_id)
+        .await?
+        .ok_or::<AppError>(DefectFailure::DefectNotFound.into())?;
 
     let row = defect::update_defect_by_id(
         pool,
@@ -207,6 +233,30 @@ pub async fn update_defect(
         },
     )
     .await?;
+
+    if before.status != row.status {
+        if let Some(recipient) =
+            defect_recipient(pool, &project_id, row.requirement_id.as_deref()).await?
+        {
+            notify(
+                pool,
+                public_origin,
+                NotifyRequest {
+                    event: "defect_status_changed".into(),
+                    recipient_user_ids: vec![recipient],
+                    actor_user_id: Some(user_id.to_string()),
+                    title: "缺陷状态已变更".into(),
+                    body: Some(format!(
+                        "缺陷「{desc}」状态：{} → {}",
+                        before.status, row.status
+                    )),
+                    link: Some(format!("/projects/{project_id}/defects")),
+                    email_link: None,
+                },
+            )
+            .await?;
+        }
+    }
 
     Ok(row)
 }
@@ -259,6 +309,7 @@ pub async fn convert_defect_to_requirement(
     project_id: &str,
     user_id: &str,
     is_admin: bool,
+    public_origin: &str,
 ) -> Result<ConvertDefectResult, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
 
@@ -325,6 +376,30 @@ pub async fn convert_defect_to_requirement(
     defect::link_defect_to_requirement(&mut *tx, defect_id, &requirement.id).await?;
 
     tx.commit().await?;
+
+    if let Some(recipient) = defect_recipient(pool, &project_id, Some(&requirement.id)).await? {
+        notify(
+            pool,
+            public_origin,
+            NotifyRequest {
+                event: "defect_converted".into(),
+                recipient_user_ids: vec![recipient],
+                actor_user_id: Some(user_id.to_string()),
+                title: "缺陷已转为需求".into(),
+                body: Some(format!(
+                    "缺陷「{}」已派生为修复需求。",
+                    defect_display_label(&defect)
+                )),
+                link: Some(format!(
+                    "/projects/{}/requirements/{}",
+                    project_id, requirement.id
+                )),
+                email_link: None,
+            },
+        )
+        .await?;
+    }
+
     Ok(ConvertDefectResult::Ok {
         requirement,
         defect,

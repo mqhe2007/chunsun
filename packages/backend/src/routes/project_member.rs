@@ -108,6 +108,7 @@ async fn update_role(
         session.user.role == "ADMIN",
         &member_id,
         role,
+        &state.config().public_origin,
     )
     .await?;
     Ok(ok(member_dto(&m)))
@@ -124,6 +125,7 @@ async fn remove(
         &session.user.user_id,
         session.user.role == "ADMIN",
         &member_id,
+        &state.config().public_origin,
     )
     .await?;
     Ok(Json(ApiResponse::ok_no_data()))

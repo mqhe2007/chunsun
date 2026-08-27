@@ -14,8 +14,7 @@ use crate::core::permission_policy::{
 use crate::repos::project;
 use crate::repos::project_member::{self, MemberWithUser};
 use crate::repos::user;
-use crate::services::email;
-use crate::services::notification::{notify_user, NotificationData};
+use crate::services::notification::{notify, NotifyRequest};
 use crate::services::project_access;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,29 +127,21 @@ pub async fn invite(
                 .as_ref()
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| "未知项目".to_string());
-            // 站内通知存相对路径（前端路由解析）；邮件必须是完整可访问 URL。
             let relative_link = format!("/projects/{project_id}");
-            let email_link = format!("{public_origin}/console/projects/{project_id}");
-            notify_user(
+            notify(
                 pool,
-                NotificationData {
-                    user_id: target.id.clone(),
-                    ty: "project_invitation".into(),
+                public_origin,
+                NotifyRequest {
+                    event: "project_invitation".into(),
+                    recipient_user_ids: vec![target.id.clone()],
+                    actor_user_id: Some(actor_user_id.to_string()),
                     title: format!("你被邀请加入项目「{project_name}」"),
                     body: Some(format!("你已被邀请以 {role} 身份加入项目。")),
                     link: Some(relative_link),
+                    email_link: None,
                 },
             )
             .await?;
-            // 邮件失败静默吞掉，不影响主流程（对齐旧后端 .catch(()=>{})）
-            email::send_notification_email(
-                pool,
-                &target.email,
-                &format!("你被邀请加入项目「{project_name}」"),
-                &format!("你已被邀请以 {role} 身份加入项目「{project_name}」。"),
-                &email_link,
-            )
-            .await;
             created
         }
     };
@@ -159,6 +150,8 @@ pub async fn invite(
 }
 
 /// PATCH /projects/:projectId/members/:memberId —— 修改成员角色。
+///
+/// 路径参数 `member_id` 实际是 `user_id`（前端传 `member.userId`）。
 pub async fn update_role(
     pool: &PgPool,
     project_id: &str,
@@ -166,6 +159,7 @@ pub async fn update_role(
     is_platform_admin: bool,
     member_id: &str,
     role: String,
+    public_origin: &str,
 ) -> Result<MemberWithUser, AppError> {
     let project = project::get_project_by_id_only(pool, project_id)
         .await?
@@ -189,16 +183,33 @@ pub async fn update_role(
     let updated = project_member::update_project_member_role(pool, project_id, member_id, &role)
         .await?
         .ok_or(MemberFailure::MemberNotFound)?;
+    notify(
+        pool,
+        public_origin,
+        NotifyRequest {
+            event: "member_role_changed".into(),
+            recipient_user_ids: vec![member_id.to_string()],
+            actor_user_id: Some(actor_user_id.to_string()),
+            title: format!("你在项目「{}」的角色已变更", project.name),
+            body: Some(format!("你的角色已更新为 {role}。")),
+            link: Some(format!("/projects/{project_id}")),
+            email_link: None,
+        },
+    )
+    .await?;
     Ok(updated)
 }
 
 /// DELETE /projects/:projectId/members/:memberId —— 移除成员。
+///
+/// 路径参数 `member_id` 实际是 `user_id`。
 pub async fn remove(
     pool: &PgPool,
     project_id: &str,
     actor_user_id: &str,
     is_platform_admin: bool,
     member_id: &str,
+    public_origin: &str,
 ) -> Result<(), AppError> {
     let project = project::get_project_by_id_only(pool, project_id)
         .await?
@@ -227,6 +238,37 @@ pub async fn remove(
     let ok = project_member::remove_project_member(pool, project_id, member_id).await?;
     if !ok {
         return Err(MemberFailure::MemberNotFound.into());
+    }
+    if is_self {
+        let _ = notify(
+            pool,
+            public_origin,
+            NotifyRequest {
+                event: "member_left".into(),
+                recipient_user_ids: vec![project.user_id.clone()],
+                actor_user_id: Some(actor_user_id.to_string()),
+                title: format!("成员已离开项目「{}」", project.name),
+                body: Some("有成员主动离开了项目。".into()),
+                link: Some(format!("/projects/{project_id}/settings/members")),
+                email_link: None,
+            },
+        )
+        .await;
+    } else {
+        let _ = notify(
+            pool,
+            public_origin,
+            NotifyRequest {
+                event: "member_removed".into(),
+                recipient_user_ids: vec![member_id.to_string()],
+                actor_user_id: Some(actor_user_id.to_string()),
+                title: format!("你已被移出项目「{}」", project.name),
+                body: Some("你已不再是该项目的成员。".into()),
+                link: Some("/".into()),
+                email_link: None,
+            },
+        )
+        .await;
     }
     Ok(())
 }

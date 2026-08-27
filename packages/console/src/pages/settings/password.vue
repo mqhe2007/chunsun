@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import UserSettingsView from "@/screens/settings/UserSettingsView.vue";
-definePage({ meta: { title: "账户设置" } });
+definePage({ meta: { title: "登录密码" } });
 </script>
 <template>
-  <UserSettingsView section="profile" />
+  <UserSettingsView section="password" />
 </template>

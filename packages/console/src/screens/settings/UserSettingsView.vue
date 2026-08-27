@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { Lock, RefreshCw, TriangleAlert, User } from "@lucide/vue";
+import { Lock, RefreshCw, TriangleAlert } from "@lucide/vue";
 import { onMounted, ref, computed } from "vue";
 import { AppField, AppPage, PasswordInput, useToast } from "@/ui";
 import { api } from "@/utils/api";
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import ProjectMegaNav, { type MegaNavItem } from "@/components/projects/ProjectMegaNav.vue";
+import SettingsMegaNav from "@/components/settings/SettingsMegaNav.vue";
 
 type User = {
   id: string;
@@ -17,7 +17,10 @@ type User = {
   updatedAt: string;
 };
 
-type SettingsSection = "profile" | "password";
+const props = withDefaults(
+  defineProps<{ section?: "profile" | "password" }>(),
+  { section: "profile" },
+);
 
 const toast = useToast();
 const loading = ref(false);
@@ -25,22 +28,10 @@ const loadError = ref(false);
 const saving = ref(false);
 const changingPassword = ref(false);
 const user = ref<User | null>(null);
-const section = ref<SettingsSection>("profile");
 const profileForm = ref({ nickname: "", qq: "" });
 const passwordForm = ref({ currentPassword: "", newPassword: "", confirmPassword: "" });
 
-const sectionOptions: MegaNavItem[] = [
-  { key: "profile", label: "基本资料", icon: User },
-  { key: "password", label: "登录密码", icon: Lock },
-];
-
-function onSectionSelect(key: string) {
-  section.value = key as SettingsSection;
-}
-
 const displayName = computed(() => user.value?.nickname || user.value?.email || "");
-
-/** 表单中即时预览的 QQ 号（优先于已保存值） */
 const previewQq = computed(() => profileForm.value.qq.trim() || user.value?.qq || "");
 
 async function fetchUser() {
@@ -124,9 +115,9 @@ onMounted(fetchUser);
 
 <template>
   <AppPage title="账户设置" class="profile-page">
+    <SettingsMegaNav />
+
     <template v-if="loading">
-      <div class="skeleton h-7 w-32 mb-2" />
-      <div class="skeleton h-9 w-56 mb-3" />
       <div class="skeleton h-56 w-full rounded-box" />
     </template>
 
@@ -142,15 +133,7 @@ onMounted(fetchUser);
     </template>
 
     <template v-else-if="user">
-      <ProjectMegaNav
-        class="mb-4"
-        :items="sectionOptions"
-        :active-key="section"
-        label="账户设置菜单"
-        @select="onSectionSelect"
-      />
-
-      <section v-show="section === 'profile'" class="card bg-base-100 p-6 flex flex-col gap-5">
+      <section v-if="props.section === 'profile'" class="card bg-base-100 p-6 flex flex-col gap-5">
         <div class="info-row">
           <div class="info-item">
             <div class="info-label text-xs font-semibold text-base-content/65">昵称</div>
@@ -206,8 +189,10 @@ onMounted(fetchUser);
         </div>
       </section>
 
-      <section v-show="section === 'password'" class="card bg-base-100 p-6 flex flex-col gap-5">
-        <p class="m-0 text-sm leading-relaxed text-base-content/65">定期更换密码有助于保护账户安全。修改成功后请妥善保管新密码。</p>
+      <section v-else class="card bg-base-100 p-6 flex flex-col gap-5">
+        <p class="m-0 text-sm leading-relaxed text-base-content/65">
+          定期更换密码有助于保护账户安全。修改成功后请妥善保管新密码。
+        </p>
 
         <div class="edit-fields">
           <AppField label="当前密码" html-for="currentPwd">

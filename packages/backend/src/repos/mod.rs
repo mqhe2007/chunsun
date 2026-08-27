@@ -9,6 +9,7 @@ pub mod harness;
 pub mod invitation;
 pub mod login_attempt;
 pub mod notification;
+pub mod notification_preference;
 pub mod project;
 pub mod project_activity;
 pub mod project_knowledge;

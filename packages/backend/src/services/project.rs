@@ -20,7 +20,7 @@ use crate::repos::project_member;
 use crate::repos::prompt::{self, PromptRow};
 use crate::repos::repository::{self, RepositoryRow};
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
-use crate::services::notification::{notify_user, NotificationData};
+use crate::services::notification::{notify, NotifyRequest, project_member_user_ids};
 use crate::services::project_access::can_project_action_db;
 use crate::services::project_stats::get_project_statistics;
 
@@ -138,6 +138,7 @@ pub async fn update_project(
     is_admin: bool,
     name: Option<&str>,
     description: Option<&str>,
+    public_origin: &str,
 ) -> Result<ProjectRow, AppError> {
     // 先按「可见性」判 404，再按「可写性」判；旧实现两步都返回 PROJECT_NOT_FOUND
     project::get_project_by_id(pool, project_id, user_id, is_admin)
@@ -162,6 +163,22 @@ pub async fn update_project(
     )
     .await?;
 
+    let recipients = project_member_user_ids(pool, project_id).await?;
+    notify(
+        pool,
+        public_origin,
+        NotifyRequest {
+            event: "project_updated".into(),
+            recipient_user_ids: recipients,
+            actor_user_id: Some(user_id.to_string()),
+            title: format!("项目「{}」信息已更新", updated.name),
+            body: Some("项目名称或描述已变更。".into()),
+            link: Some(format!("/projects/{project_id}")),
+            email_link: None,
+        },
+    )
+    .await?;
+
     Ok(updated)
 }
 
@@ -170,10 +187,33 @@ pub async fn delete_project(
     project_id: &str,
     user_id: &str,
     is_admin: bool,
+    public_origin: &str,
 ) -> Result<ProjectRow, AppError> {
+    let member_ids = project_member_user_ids(pool, project_id).await?;
+    let project_name = project::get_project_row_by_id(pool, project_id)
+        .await?
+        .map(|p| p.name)
+        .unwrap_or_else(|| "未知项目".to_string());
+
     let deleted = project::delete_project_by_id(pool, project_id, user_id, is_admin)
         .await?
         .ok_or(ProjectFailure::ProjectNotFound)?;
+
+    let _ = notify(
+        pool,
+        public_origin,
+        NotifyRequest {
+            event: "project_deleted".into(),
+            recipient_user_ids: member_ids,
+            actor_user_id: Some(user_id.to_string()),
+            title: format!("项目「{project_name}」已删除"),
+            body: Some("该项目已被删除。".into()),
+            link: Some("/".into()),
+            email_link: None,
+        },
+    )
+    .await;
+
     Ok(deleted)
 }
 
@@ -260,6 +300,7 @@ pub async fn generate_secret_key(
     user_id: &str,
     is_admin: bool,
     auth_project_id: Option<&str>,
+    public_origin: &str,
 ) -> Result<String, AppError> {
     // SK 通道禁止调用（避免用旧密钥自举出新密钥）
     if auth_project_id.is_some() {
@@ -283,17 +324,20 @@ pub async fn generate_secret_key(
     let updated = project::set_project_secret_key(pool, project_id, &key).await?;
 
     if let Some(before) = before {
-        notify_user(
+        notify(
             pool,
-            NotificationData {
-                user_id: before.user_id.clone(),
-                ty: "security_alert".to_string(),
-                title: "项目 Secret Key 已重新生成".to_string(),
+            public_origin,
+            NotifyRequest {
+                event: "secret_key_regenerated".into(),
+                recipient_user_ids: vec![before.user_id.clone()],
+                actor_user_id: Some(user_id.to_string()),
+                title: "项目 Secret Key 已重新生成".into(),
                 body: Some(format!(
                     "项目「{}」的 Secret Key 已被重新生成。如非本人操作，请检查项目成员权限。",
                     before.name
                 )),
                 link: Some(format!("/projects/{project_id}/settings")),
+                email_link: None,
             },
         )
         .await?;
@@ -310,6 +354,7 @@ pub async fn revoke_secret_key(
     user_id: &str,
     is_admin: bool,
     auth_project_id: Option<&str>,
+    public_origin: &str,
 ) -> Result<(), AppError> {
     if auth_project_id.is_some() {
         return Err(ProjectFailure::Forbidden.into());
@@ -327,7 +372,30 @@ pub async fn revoke_secret_key(
         return Err(ProjectFailure::Forbidden.into());
     }
 
-    project::clear_project_secret_key(pool, project_id).await
+    let before = project::get_project_row_by_id(pool, project_id).await?;
+    project::clear_project_secret_key(pool, project_id).await?;
+
+    if let Some(before) = before {
+        notify(
+            pool,
+            public_origin,
+            NotifyRequest {
+                event: "secret_key_revoked".into(),
+                recipient_user_ids: vec![before.user_id.clone()],
+                actor_user_id: Some(user_id.to_string()),
+                title: "项目 Secret Key 已撤销".into(),
+                body: Some(format!(
+                    "项目「{}」的 Secret Key 已被撤销。如非本人操作，请检查项目成员权限。",
+                    before.name
+                )),
+                link: Some(format!("/projects/{project_id}/settings")),
+                email_link: None,
+            },
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -151,6 +151,7 @@ async fn update(
         is_admin,
         name,
         description,
+        &state.config().public_origin,
     )
     .await?;
     Ok(ok(project_dto(&updated)))
@@ -167,6 +168,7 @@ async fn remove(
         &project_id,
         &session.user.user_id,
         is_admin,
+        &state.config().public_origin,
     )
     .await?;
     Ok(ok(project_dto(&deleted)))

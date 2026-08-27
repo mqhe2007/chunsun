@@ -14,7 +14,7 @@ use crate::auth::{sign_jwt, AuthUser};
 use crate::core::password::{hash_password, rehash_if_legacy, verify_password};
 use crate::core::tokens::generate_secure_token;
 use crate::repos::{email_token, invitation, user};
-use crate::services::notification::{notify_user, NotificationData};
+use crate::services::notification::{notify, NotifyRequest};
 use crate::services::security;
 use crate::services::settings;
 use crate::services::email;
@@ -182,6 +182,23 @@ pub async fn login_user(
     if !verify_password(password, &found.password)? {
         let result = security::record_failed_login(pool, &identifier, Some(&found.id)).await?;
         if result.locked {
+            let _ = notify(
+                pool,
+                &config.public_origin,
+                NotifyRequest {
+                    event: "account_locked".into(),
+                    recipient_user_ids: vec![found.id.clone()],
+                    actor_user_id: None,
+                    title: "账号已暂时锁定".into(),
+                    body: Some(format!(
+                        "因连续登录失败，你的账号已被锁定约 {} 秒。如非本人操作，请尽快重置密码。",
+                        result.remaining_seconds
+                    )),
+                    link: Some("/settings/profile".into()),
+                    email_link: None,
+                },
+            )
+            .await;
             return Err(AuthFailure::AccountLocked.into());
         }
         return Err(AuthFailure::InvalidCredentials.into());
@@ -207,7 +224,11 @@ pub async fn login_user(
 }
 
 /// 邮箱验证。
-pub async fn verify_email(pool: &PgPool, token: &str) -> Result<(), AppError> {
+pub async fn verify_email(
+    pool: &PgPool,
+    config: &crate::config::AppConfig,
+    token: &str,
+) -> Result<(), AppError> {
     let record = email_token::get_email_verification_token_by_token(pool, token).await?;
     let Some(record) = record else {
         return Err(AuthFailure::InvalidOrExpiredToken.into());
@@ -219,14 +240,17 @@ pub async fn verify_email(pool: &PgPool, token: &str) -> Result<(), AppError> {
     user::update_user_email_verified(pool, &record.user_id, true).await?;
     email_token::mark_email_verification_token_used(pool, &record.id).await?;
 
-    notify_user(
+    notify(
         pool,
-        NotificationData {
-            user_id: record.user_id.clone(),
-            ty: "email_verified".into(),
+        &config.public_origin,
+        NotifyRequest {
+            event: "email_verified".into(),
+            recipient_user_ids: vec![record.user_id.clone()],
+            actor_user_id: None,
             title: "邮箱验证成功".into(),
             body: Some("你的邮箱已通过验证，现在可以正常使用春笋。".into()),
-            link: None,
+            link: Some("/settings/profile".into()),
+            email_link: None,
         },
     )
     .await?;
@@ -288,6 +312,7 @@ pub async fn request_password_reset(
 /// 执行重置密码。
 pub async fn reset_password(
     pool: &PgPool,
+    config: &crate::config::AppConfig,
     token: &str,
     new_password: &str,
 ) -> Result<(), AppError> {
@@ -308,14 +333,17 @@ pub async fn reset_password(
     user::update_user_password(pool, &record.user_id, &password_hash).await?;
     email_token::mark_password_reset_token_used(pool, &record.id).await?;
 
-    notify_user(
+    notify(
         pool,
-        NotificationData {
-            user_id: record.user_id.clone(),
-            ty: "password_changed".into(),
+        &config.public_origin,
+        NotifyRequest {
+            event: "password_changed".into(),
+            recipient_user_ids: vec![record.user_id.clone()],
+            actor_user_id: None,
             title: "密码已重置".into(),
             body: Some("你的账户密码刚刚被重置。如非本人操作，请立即联系管理员。".into()),
-            link: None,
+            link: Some("/settings/profile".into()),
+            email_link: None,
         },
     )
     .await?;

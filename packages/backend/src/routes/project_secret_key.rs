@@ -46,6 +46,7 @@ async fn generate(
         &session.user.user_id,
         session.user.role == "ADMIN",
         session.project_id.as_deref(),
+        &state.config().public_origin,
     )
     .await?;
 
@@ -64,6 +65,7 @@ async fn revoke(
         &session.user.user_id,
         session.user.role == "ADMIN",
         session.project_id.as_deref(),
+        &state.config().public_origin,
     )
     .await?;
 

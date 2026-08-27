@@ -140,6 +140,7 @@ async fn create(
             description,
             is_secret,
         },
+        &config.public_origin,
     )
     .await?;
 
@@ -174,6 +175,7 @@ async fn update(
             description,
             is_secret,
         },
+        &config.public_origin,
     )
     .await?;
 
@@ -185,7 +187,14 @@ async fn remove(
     CurrentUser(session): CurrentUser,
     Path((project_id, var_id)): Path<(String, String)>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    env_var_service::delete_env_var(&state.pool(), caller(&session), &project_id, &var_id).await?;
+    env_var_service::delete_env_var(
+        &state.pool(),
+        caller(&session),
+        &project_id,
+        &var_id,
+        &state.config().public_origin,
+    )
+    .await?;
     Ok(Json(ApiResponse::ok_no_data()))
 }
 
