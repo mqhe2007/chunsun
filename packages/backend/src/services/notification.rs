@@ -141,7 +141,12 @@ fn event_blocks_email(event: &str) -> bool {
     event == "email_verified"
 }
 
-/// 协作类跳过 actor==recipient；安全类仍发给本人。
+/// 跳过 actor==recipient 的「自发自收」；以下两类即使本人触发也仍发给本人：
+/// - Security：安全事件必须让本人知晓；
+/// - Delivery：轮次终态 / 需求决策必须回到负责人。AI 经项目 Secret Key 交付时，actor
+///   被解析为项目创建者（见 auth `extract_session`），无 owner 时收件人又回退到项目创建者，
+///   若照常 self-skip 会把 run_completed / run_needs_decision 等整条吞掉（方案B：交付类
+///   一律不做 self-skip，网页端本人手动操作也照发）。
 fn should_skip_self(event: &str, actor_id: Option<&str>, recipient_id: &str) -> bool {
     let Some(actor) = actor_id else {
         return false;
@@ -149,7 +154,10 @@ fn should_skip_self(event: &str, actor_id: Option<&str>, recipient_id: &str) -> 
     if actor != recipient_id {
         return false;
     }
-    !matches!(category_for_event(event), Some(NotifyCategory::Security))
+    !matches!(
+        category_for_event(event),
+        Some(NotifyCategory::Security) | Some(NotifyCategory::Delivery)
+    )
 }
 
 pub fn is_smtp_delivery_available(config: &settings::SmtpConfig) -> bool {
@@ -494,9 +502,24 @@ mod tests {
 
     #[test]
     fn skip_self_only_for_collab() {
-        assert!(should_skip_self("defect_created", Some("u1"), "u1"));
-        assert!(!should_skip_self("password_changed", Some("u1"), "u1"));
+        // 他人操作：从不跳过
         assert!(!should_skip_self("defect_created", Some("u1"), "u2"));
+        // 无 actor（系统触发）：不跳过
+        assert!(!should_skip_self("run_completed", None, "u1"));
+        // 本人操作本人：安全类照发
+        assert!(!should_skip_self("password_changed", Some("u1"), "u1"));
+        // 本人操作本人：交付类（轮次终态/需求决策/负责人变更）照发——方案B，
+        // 修复 Agent 经 Secret Key 交付时项目创建者收不到通知
+        assert!(!should_skip_self("run_completed", Some("u1"), "u1"));
+        assert!(!should_skip_self("run_needs_decision", Some("u1"), "u1"));
+        assert!(!should_skip_self("run_finished", Some("u1"), "u1"));
+        assert!(!should_skip_self("run_abandoned", Some("u1"), "u1"));
+        assert!(!should_skip_self("requirement_reset", Some("u1"), "u1"));
+        assert!(!should_skip_self("requirement_owner_changed", Some("u1"), "u1"));
+        // 本人操作本人：其余协作类（缺陷/成员/项目）仍跳过，避免自己点的操作打扰自己
+        assert!(should_skip_self("defect_created", Some("u1"), "u1"));
+        assert!(should_skip_self("member_removed", Some("u1"), "u1"));
+        assert!(should_skip_self("project_updated", Some("u1"), "u1"));
     }
 
     #[test]
