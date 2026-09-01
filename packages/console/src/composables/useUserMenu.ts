@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/auth'
 import { storeToRefs } from 'pinia'
 import { api } from '@/utils/api'
 import type { DropdownItem } from '@/ui'
+import { DOCS_PATH, buildUserMenuItems } from './userMenuItems'
 
 type UserProfile = {
   email: string
@@ -24,28 +25,20 @@ export function useUserMenu(includeSystemAdmin: boolean) {
   const displayName = computed(() => profile.value?.nickname || profile.value?.email || '用户')
   const userEmail = computed(() => profile.value?.email || '')
 
-  const userMenuItems = computed<DropdownItem[]>(() => {
-    const items: DropdownItem[] = [
+  const userMenuItems = computed<DropdownItem[]>(() =>
+    buildUserMenuItems(
       {
-        label: '账户设置',
-        command: () => router.push('/settings/profile'),
+        goProfile: () => router.push('/settings/profile'),
+        goAdmin: () => router.push('/admin'),
+        goDocs: () => window.location.assign(DOCS_PATH),
+        logout: () => {
+          auth.logout()
+          router.push('/auth/login')
+        },
       },
-    ]
-    if (includeSystemAdmin && isAdmin.value) {
-      items.push({
-        label: '系统管理',
-        command: () => router.push('/admin'),
-      })
-    }
-    items.push({
-      label: '退出登录',
-      command: () => {
-        auth.logout()
-        router.push('/auth/login')
-      },
-    })
-    return items
-  })
+      { includeSystemAdmin, isAdmin: isAdmin.value },
+    ),
+  )
 
   onMounted(async () => {
     try {
