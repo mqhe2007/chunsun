@@ -29,6 +29,13 @@ type Requirement = {
     nickname: string | null;
     qq: string | null;
   } | null;
+  createdBy?: string | null;
+  creator?: {
+    id: string;
+    nickname: string | null;
+    qq: string | null;
+    email: string | null;
+  } | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -73,6 +80,10 @@ const ownerOptions = computed(() =>
 
 function ownerLabel(row: Requirement): string {
   return row.owner?.nickname || "—";
+}
+
+function creatorLabel(row: Requirement): string {
+  return row.creator?.nickname || row.creator?.email || "—";
 }
 
 function statusBadgeClass(status: string) {
@@ -295,6 +306,14 @@ onMounted(async () => {
               <div v-if="requirement.owner" class="owner-cell">
                 <UserAvatar :qq="requirement.owner.qq" :size="24" />
                 <span>{{ ownerLabel(requirement) }}</span>
+              </div>
+              <span v-else class="text-base-content/60">—</span>
+            </div>
+            <div>
+              <span class="detail-label">创建人</span>
+              <div v-if="requirement.creator" class="owner-cell">
+                <UserAvatar :qq="requirement.creator.qq" :size="24" />
+                <span>{{ creatorLabel(requirement) }}</span>
               </div>
               <span v-else class="text-base-content/60">—</span>
             </div>

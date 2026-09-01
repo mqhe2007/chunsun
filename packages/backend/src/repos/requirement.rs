@@ -25,6 +25,15 @@ pub struct RequirementOwner {
     pub qq: Option<String>,
 }
 
+/// 需求创建人摘要（形状对齐 `RequirementOwner`，另带 email 作昵称缺失时的展示兜底）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequirementCreator {
+    pub id: String,
+    pub nickname: Option<String>,
+    pub qq: Option<String>,
+    pub email: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RequirementRow {
     pub id: String,
@@ -37,14 +46,17 @@ pub struct RequirementRow {
     pub coverage: String,
     pub origin: String,
     pub owner_id: Option<String>,
+    pub created_by: Option<String>,
     pub released_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// 仅在 `include: { owner: … }` 的查询里有值；`create` 路径恒为 `None`。
     pub owner: Option<RequirementOwner>,
+    /// 仅在带 creator 关联的查询里有值；`create` 路径恒为 `None`（同 owner 行为）。
+    pub creator: Option<RequirementCreator>,
 }
 
-/// sqlx 取行的中间结构：owner 字段用 LEFT JOIN 平铺，再折叠成 `RequirementOwner`。
+/// sqlx 取行的中间结构：owner / creator 字段用 LEFT JOIN 平铺，再折叠成对应对象。
 #[derive(Debug, Clone, FromRow)]
 struct RequirementJoinRow {
     id: String,
@@ -57,12 +69,17 @@ struct RequirementJoinRow {
     coverage: String,
     origin: String,
     owner_id: Option<String>,
+    created_by: Option<String>,
     released_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     o_id: Option<String>,
     o_nickname: Option<String>,
     o_qq: Option<String>,
+    c_id: Option<String>,
+    c_nickname: Option<String>,
+    c_qq: Option<String>,
+    c_email: Option<String>,
 }
 
 impl RequirementJoinRow {
@@ -72,6 +89,12 @@ impl RequirementJoinRow {
             id,
             nickname: self.o_nickname,
             qq: self.o_qq,
+        });
+        let creator = self.c_id.map(|id| RequirementCreator {
+            id,
+            nickname: self.c_nickname,
+            qq: self.c_qq,
+            email: self.c_email,
         });
         RequirementRow {
             id: self.id,
@@ -84,28 +107,34 @@ impl RequirementJoinRow {
             coverage: self.coverage,
             origin: self.origin,
             owner_id: self.owner_id,
+            created_by: self.created_by,
             released_at: self.released_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
             owner,
+            creator,
         }
     }
 }
 
 const REQ_COLS: &str = "r.id, r.project_id, r.repository_id, r.description, r.source_text, \
      r.client_notes, r.status::text AS status, r.coverage::text AS coverage, \
-     r.origin::text AS origin, r.owner_id, r.released_at, r.created_at, r.updated_at";
+     r.origin::text AS origin, r.owner_id, r.created_by, r.released_at, r.created_at, r.updated_at";
 
 const OWNER_COLS: &str =
     "u.id AS o_id, u.nickname AS o_nickname, u.qq AS o_qq";
 
-/// 不带表别名、不带 owner 关联的列（`INSERT … RETURNING` / `DELETE … RETURNING` 用）。
-/// owner 四列填 NULL，折叠后 `owner` 就是 `None`——正好复刻旧实现「create/delete 不 include
-/// owner」的行为。
+const CREATOR_COLS: &str =
+    "u2.id AS c_id, u2.nickname AS c_nickname, u2.qq AS c_qq, u2.email AS c_email";
+
+/// 不带表别名、不带 owner/creator 关联的列（`INSERT … RETURNING` / `DELETE … RETURNING` 用）。
+/// owner/creator 七列填 NULL，折叠后 `owner`/`creator` 就是 `None`——正好复刻旧实现
+/// 「create/delete 不 include owner」的行为（creator 同此约定）。
 const REQ_COLS_RETURNING: &str = "id, project_id, repository_id, description, source_text, \
      client_notes, status::text AS status, coverage::text AS coverage, origin::text AS origin, \
-     owner_id, released_at, created_at, updated_at, \
-     NULL::text AS o_id, NULL::text AS o_nickname, NULL::text AS o_qq";
+     owner_id, created_by, released_at, created_at, updated_at, \
+     NULL::text AS o_id, NULL::text AS o_nickname, NULL::text AS o_qq, \
+     NULL::text AS c_id, NULL::text AS c_nickname, NULL::text AS c_qq, NULL::text AS c_email";
 
 pub struct CreateRequirementInput<'a> {
     pub project_id: &'a str,
@@ -117,12 +146,14 @@ pub struct CreateRequirementInput<'a> {
     pub coverage: Option<&'a str>,
     pub origin: Option<&'a str>,
     pub owner_id: Option<&'a str>,
+    /// 创建人用户 id（由服务层写当前登录用户；历史数据迁移后为 NULL）。
+    pub created_by: Option<&'a str>,
 }
 
 /// createRequirement：默认 `status=pending` / `coverage=none` / `origin=manual`。
 ///
-/// 注意返回行**不带 owner 关联**（旧实现 `prisma.requirement.create` 没有 include），
-/// 因此即使 `ownerId` 有值，响应里的 `owner` 也是 `null`。
+/// 注意返回行**不带 owner/creator 关联**（旧实现 `prisma.requirement.create` 没有 include），
+/// 因此即使 `ownerId`/`createdBy` 有值，响应里的 `owner`/`creator` 也是 `null`。
 ///
 /// 接受泛型 `Executor`：`&PgPool`（普通调用）与 `&mut Transaction`（convert 事务内）都可用。
 pub async fn create_requirement<'e, E>(
@@ -136,10 +167,10 @@ where
     let sql = format!(
         r#"INSERT INTO requirement
              (id, project_id, repository_id, description, source_text, client_notes,
-              status, coverage, origin, owner_id, created_at, updated_at)
+              status, coverage, origin, owner_id, created_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6,
                    $7::"RequirementStatus", $8::"RequirementCoverage",
-                   $9::"RequirementOrigin", $10, NOW(), NOW())
+                   $9::"RequirementOrigin", $10, $11, NOW(), NOW())
            RETURNING {REQ_COLS_RETURNING}"#
     );
     let row = sqlx::query_as::<_, RequirementJoinRow>(&sql)
@@ -153,6 +184,7 @@ where
         .bind(input.coverage.unwrap_or("none"))
         .bind(input.origin.unwrap_or("manual"))
         .bind(input.owner_id)
+        .bind(input.created_by)
         .fetch_one(executor)
         .await?;
     Ok(row.into_row())
@@ -239,8 +271,9 @@ pub async fn list_requirements_by_project(
     };
 
     let mut qb = QueryBuilder::new(format!(
-        "SELECT {REQ_COLS}, {OWNER_COLS} FROM requirement r \
-         LEFT JOIN \"user\" u ON u.id = r.owner_id WHERE r.project_id = "
+        "SELECT {REQ_COLS}, {OWNER_COLS}, {CREATOR_COLS} FROM requirement r \
+         LEFT JOIN \"user\" u ON u.id = r.owner_id \
+         LEFT JOIN \"user\" u2 ON u2.id = r.created_by WHERE r.project_id = "
     ));
     qb.push_bind(project_id);
     push_requirement_list_filters(&mut qb, &filters, id_like.as_deref());
@@ -278,8 +311,9 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     let sql = format!(
-        "SELECT {REQ_COLS}, {OWNER_COLS} FROM requirement r \
+        "SELECT {REQ_COLS}, {OWNER_COLS}, {CREATOR_COLS} FROM requirement r \
          LEFT JOIN \"user\" u ON u.id = r.owner_id \
+         LEFT JOIN \"user\" u2 ON u2.id = r.created_by \
          WHERE r.id = $1 AND r.project_id = $2"
     );
     let row = sqlx::query_as::<_, RequirementJoinRow>(&sql)
@@ -304,8 +338,9 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     let sql = format!(
-        "SELECT {REQ_COLS}, {OWNER_COLS} FROM requirement r \
+        "SELECT {REQ_COLS}, {OWNER_COLS}, {CREATOR_COLS} FROM requirement r \
          LEFT JOIN \"user\" u ON u.id = r.owner_id \
+         LEFT JOIN \"user\" u2 ON u2.id = r.created_by \
          WHERE r.id = $1"
     );
     let row = sqlx::query_as::<_, RequirementJoinRow>(&sql)

@@ -126,6 +126,7 @@ pub async fn create_defect(
             status: args.status,
             severity: args.severity,
             requirement_id: args.requirement_id,
+            created_by: Some(user_id),
         },
     )
     .await?;
@@ -356,6 +357,7 @@ pub async fn convert_defect_to_requirement(
     let source_text = source_parts.join("\n\n");
 
     // 5. 建 requirement（origin=defect，status=pending，coverage=none）
+    //    创建人为触发转需求的当前用户（convert 的 actor 即创建人）。
     let requirement = requirement::create_requirement(
         &mut *tx,
         CreateRequirementInput {
@@ -368,6 +370,7 @@ pub async fn convert_defect_to_requirement(
             coverage: Some("none"),
             origin: Some("defect"),
             owner_id: None,
+            created_by: Some(user_id),
         },
     )
     .await?;

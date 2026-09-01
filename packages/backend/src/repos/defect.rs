@@ -26,6 +26,15 @@ pub struct DefectRequirementLink {
     pub status: String,
 }
 
+/// 缺陷创建人摘要（形状对齐 `RequirementCreator`：id/nickname/qq + email 兜底）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefectCreator {
+    pub id: String,
+    pub nickname: Option<String>,
+    pub qq: Option<String>,
+    pub email: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DefectRow {
     pub id: String,
@@ -34,13 +43,16 @@ pub struct DefectRow {
     pub status: String,
     pub severity: String,
     pub requirement_id: Option<String>,
+    pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// 仅在 `include: { requirement: … }` 的查询里有值；新建缺陷恒为 `None`。
     pub requirement: Option<DefectRequirementLink>,
+    /// 仅在带 creator 关联的查询里有值；`create` 路径恒为 `None`（同 requirement 行为）。
+    pub creator: Option<DefectCreator>,
 }
 
-/// sqlx 取行的中间结构：requirement 字段用 LEFT JOIN 平铺，再折叠成 `DefectRequirementLink`。
+/// sqlx 取行的中间结构：requirement / creator 字段用 LEFT JOIN 平铺，再折叠成对应对象。
 #[derive(Debug, Clone, FromRow)]
 struct DefectJoinRow {
     id: String,
@@ -49,11 +61,16 @@ struct DefectJoinRow {
     status: String,
     severity: String,
     requirement_id: Option<String>,
+    created_by: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     rl_id: Option<String>,
     rl_description: Option<String>,
     rl_status: Option<String>,
+    c_id: Option<String>,
+    c_nickname: Option<String>,
+    c_qq: Option<String>,
+    c_email: Option<String>,
 }
 
 impl DefectJoinRow {
@@ -66,6 +83,12 @@ impl DefectJoinRow {
             }),
             _ => None,
         };
+        let creator = self.c_id.map(|id| DefectCreator {
+            id,
+            nickname: self.c_nickname,
+            qq: self.c_qq,
+            email: self.c_email,
+        });
         DefectRow {
             id: self.id,
             project_id: self.project_id,
@@ -73,30 +96,36 @@ impl DefectJoinRow {
             status: self.status,
             severity: self.severity,
             requirement_id: self.requirement_id,
+            created_by: self.created_by,
             created_at: self.created_at,
             updated_at: self.updated_at,
             requirement,
+            creator,
         }
     }
 }
 
 const DEFECT_COLS: &str = "d.id, d.project_id, d.description, \
      d.status::text AS status, d.severity::text AS severity, \
-     d.requirement_id, d.created_at, d.updated_at";
+     d.requirement_id, d.created_by, d.created_at, d.updated_at";
 
 const REQ_LINK_COLS: &str =
     "r.id AS rl_id, r.description AS rl_description, r.status::text AS rl_status";
 
+const CREATOR_COLS: &str =
+    "u2.id AS c_id, u2.nickname AS c_nickname, u2.qq AS c_qq, u2.email AS c_email";
+
 /// INSERT … RETURNING 投影（无表别名；status/severity 为枚举原值，外层 SELECT 再 ::text）。
 const DEFECT_INSERT_RETURNING: &str =
-    "id, project_id, description, status, severity, requirement_id, created_at, updated_at";
+    "id, project_id, description, status, severity, requirement_id, created_by, created_at, updated_at";
 
-/// 不带表别名、不带 requirement 关联的列（`INSERT … RETURNING` / `DELETE … RETURNING` 用）。
-/// requirement 三列填 NULL，折叠后 `requirement` 就是 `None`。
+/// 不带表别名、不带 requirement/creator 关联的列（`INSERT … RETURNING` / `DELETE … RETURNING` 用）。
+/// requirement 三列与 creator 四列填 NULL，折叠后 `requirement`/`creator` 就是 `None`。
 const DEFECT_COLS_RETURNING: &str = "id, project_id, description, \
      status::text AS status, severity::text AS severity, \
-     requirement_id, created_at, updated_at, \
-     NULL::text AS rl_id, NULL::text AS rl_description, NULL::text AS rl_status";
+     requirement_id, created_by, created_at, updated_at, \
+     NULL::text AS rl_id, NULL::text AS rl_description, NULL::text AS rl_status, \
+     NULL::text AS c_id, NULL::text AS c_nickname, NULL::text AS c_qq, NULL::text AS c_email";
 
 pub struct CreateDefectInput<'a> {
     pub project_id: &'a str,
@@ -104,6 +133,8 @@ pub struct CreateDefectInput<'a> {
     pub status: Option<&'a str>,
     pub severity: Option<&'a str>,
     pub requirement_id: Option<&'a str>,
+    /// 创建人用户 id（由服务层写当前登录用户；历史数据迁移后为 NULL）。
+    pub created_by: Option<&'a str>,
 }
 
 /// createDefect：默认 `status=open` / `severity=minor`。
@@ -120,12 +151,13 @@ pub async fn create_defect(
         "WITH ins AS ( \
            INSERT INTO defect \
              (id, project_id, description, status, severity, requirement_id, \
-              created_at, updated_at) \
-           VALUES ($1, $2, $3, $4::\"DefectStatus\", $5::\"DefectSeverity\", $6, NOW(), NOW()) \
+              created_by, created_at, updated_at) \
+           VALUES ($1, $2, $3, $4::\"DefectStatus\", $5::\"DefectSeverity\", $6, $7, NOW(), NOW()) \
            RETURNING {DEFECT_INSERT_RETURNING} \
          ) \
-         SELECT {DEFECT_COLS}, {REQ_LINK_COLS} FROM ins d \
-         LEFT JOIN \"requirement\" r ON r.id = d.requirement_id"
+         SELECT {DEFECT_COLS}, {REQ_LINK_COLS}, {CREATOR_COLS} FROM ins d \
+         LEFT JOIN \"requirement\" r ON r.id = d.requirement_id \
+         LEFT JOIN \"user\" u2 ON u2.id = d.created_by"
     );
     let row = sqlx::query_as::<_, DefectJoinRow>(&sql)
         .bind(&id)
@@ -134,6 +166,7 @@ pub async fn create_defect(
         .bind(input.status.unwrap_or("open"))
         .bind(input.severity.unwrap_or("minor"))
         .bind(input.requirement_id)
+        .bind(input.created_by)
         .fetch_one(pool)
         .await?;
     Ok(row.into_row())
@@ -158,8 +191,9 @@ pub async fn list_defects_by_project(
     filters: DefectListFilters<'_>,
 ) -> Result<Vec<DefectRow>, AppError> {
     let mut qb = QueryBuilder::new(format!(
-        "SELECT {DEFECT_COLS}, {REQ_LINK_COLS} FROM defect d \
-         LEFT JOIN \"requirement\" r ON r.id = d.requirement_id WHERE d.project_id = "
+        "SELECT {DEFECT_COLS}, {REQ_LINK_COLS}, {CREATOR_COLS} FROM defect d \
+         LEFT JOIN \"requirement\" r ON r.id = d.requirement_id \
+         LEFT JOIN \"user\" u2 ON u2.id = d.created_by WHERE d.project_id = "
     ));
     qb.push_bind(project_id);
 
@@ -216,8 +250,9 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     let sql = format!(
-        "SELECT {DEFECT_COLS}, {REQ_LINK_COLS} FROM defect d \
+        "SELECT {DEFECT_COLS}, {REQ_LINK_COLS}, {CREATOR_COLS} FROM defect d \
          LEFT JOIN \"requirement\" r ON r.id = d.requirement_id \
+         LEFT JOIN \"user\" u2 ON u2.id = d.created_by \
          WHERE d.id = $1 AND d.project_id = $2"
     );
     let row = sqlx::query_as::<_, DefectJoinRow>(&sql)

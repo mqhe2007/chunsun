@@ -145,6 +145,7 @@ pub async fn create_requirement(
             coverage: args.coverage,
             origin: None,
             owner_id,
+            created_by: Some(user_id),
         },
     )
     .await?;

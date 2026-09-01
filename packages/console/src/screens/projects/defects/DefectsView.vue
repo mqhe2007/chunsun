@@ -19,6 +19,7 @@ import {
   DEFECT_STATUS_LABEL,
 } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
+import UserAvatar from "@/components/common/UserAvatar.vue";
 
 type DefectRow = {
   id: string;
@@ -26,6 +27,13 @@ type DefectRow = {
   status: string;
   severity: string;
   requirementId?: string | null;
+  createdBy?: string | null;
+  creator?: {
+    id: string;
+    nickname: string | null;
+    qq: string | null;
+    email: string | null;
+  } | null;
   updatedAt: string;
 };
 
@@ -71,6 +79,10 @@ function severityBadgeClass(sev: string) {
   if (sev === "major") return "badge-warning";
   if (sev === "trivial") return "badge-ghost";
   return "badge-info";
+}
+
+function creatorLabel(row: DefectRow): string {
+  return row.creator?.nickname || row.creator?.email || "—";
 }
 
 function buildQuery() {
@@ -375,6 +387,14 @@ onMounted(async () => {
           </span>
         </div>
         <div class="full">
+          <span class="detail-label">创建人</span>
+          <div v-if="selected.creator" class="creator-cell">
+            <UserAvatar :qq="selected.creator.qq" :size="24" />
+            <span>{{ creatorLabel(selected) }}</span>
+          </div>
+          <span v-else class="text-base-content/60">—</span>
+        </div>
+        <div class="full">
           <span class="detail-label">修复需求</span>
           <router-link
             v-if="selected.requirementId"
@@ -469,6 +489,19 @@ onMounted(async () => {
 
 .detail-link:hover {
   text-decoration: underline;
+}
+
+.creator-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.creator-cell > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-feats code {

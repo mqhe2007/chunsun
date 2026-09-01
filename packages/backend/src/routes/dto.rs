@@ -77,6 +77,13 @@ pub fn requirement_dto(r: &RequirementRow) -> Value {
             "nickname": o.nickname,
             "qq": o.qq,
         })),
+        "createdBy": r.created_by,
+        "creator": r.creator.as_ref().map_or(Value::Null, |c| json!({
+            "id": c.id,
+            "nickname": c.nickname,
+            "qq": c.qq,
+            "email": c.email,
+        })),
         "releasedAt": r.released_at.as_ref().map_or(Value::Null, dt_value),
         "createdAt": dt_value(&r.created_at),
         "updatedAt": dt_value(&r.updated_at),
@@ -93,6 +100,13 @@ pub fn defect_dto(d: &DefectRow) -> Value {
         "status": d.status,
         "severity": d.severity,
         "requirementId": d.requirement_id,
+        "createdBy": d.created_by,
+        "creator": d.creator.as_ref().map_or(Value::Null, |c| json!({
+            "id": c.id,
+            "nickname": c.nickname,
+            "qq": c.qq,
+            "email": c.email,
+        })),
         "createdAt": dt_value(&d.created_at),
         "updatedAt": dt_value(&d.updated_at),
         "requirement": d.requirement.as_ref().map_or(Value::Null, |r| json!({
@@ -207,4 +221,141 @@ pub fn heatmap_dto(window_days: u32, max: u32, entries: &[HeatmapEntry]) -> Valu
             .map(|e| json!({ "date": e.date, "count": e.count }))
             .collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repos::defect::{DefectCreator, DefectRequirementLink};
+    use crate::repos::requirement::{RequirementCreator, RequirementOwner};
+
+    fn dt(secs: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).expect("valid ts")
+    }
+
+    fn base_requirement_row() -> RequirementRow {
+        RequirementRow {
+            id: "req_1".into(),
+            project_id: "p_1".into(),
+            repository_id: None,
+            description: "需求描述".into(),
+            source_text: None,
+            client_notes: None,
+            status: "pending".into(),
+            coverage: "none".into(),
+            origin: "manual".into(),
+            owner_id: None,
+            created_by: None,
+            released_at: None,
+            created_at: dt(0),
+            updated_at: dt(0),
+            owner: None,
+            creator: None,
+        }
+    }
+
+    #[test]
+    fn requirement_dto_emits_creator_when_present() {
+        let mut row = base_requirement_row();
+        row.created_by = Some("u_1".into());
+        row.creator = Some(RequirementCreator {
+            id: "u_1".into(),
+            nickname: Some("alice".into()),
+            qq: Some("12345".into()),
+            email: Some("alice@example.com".into()),
+        });
+
+        let v = requirement_dto(&row);
+        assert_eq!(v["createdBy"], "u_1");
+        assert_eq!(v["creator"]["id"], "u_1");
+        assert_eq!(v["creator"]["nickname"], "alice");
+        assert_eq!(v["creator"]["qq"], "12345");
+        assert_eq!(v["creator"]["email"], "alice@example.com");
+    }
+
+    #[test]
+    fn requirement_dto_creator_is_null_when_absent() {
+        let row = base_requirement_row();
+        let v = requirement_dto(&row);
+        assert_eq!(v["createdBy"], Value::Null);
+        assert_eq!(v["creator"], Value::Null);
+    }
+
+    #[test]
+    fn requirement_dto_owner_and_creator_are_independent() {
+        let mut row = base_requirement_row();
+        row.owner_id = Some("u_2".into());
+        row.owner = Some(RequirementOwner {
+            id: "u_2".into(),
+            nickname: Some("bob".into()),
+            qq: None,
+        });
+        row.created_by = Some("u_1".into());
+        row.creator = Some(RequirementCreator {
+            id: "u_1".into(),
+            nickname: None,
+            qq: None,
+            email: Some("alice@example.com".into()),
+        });
+
+        let v = requirement_dto(&row);
+        assert_eq!(v["owner"]["id"], "u_2");
+        assert_eq!(v["owner"]["nickname"], "bob");
+        assert_eq!(v["creator"]["id"], "u_1");
+        assert_eq!(v["creator"]["email"], "alice@example.com");
+    }
+
+    #[test]
+    fn defect_dto_emits_creator_when_present() {
+        let row = DefectRow {
+            id: "def_1".into(),
+            project_id: "p_1".into(),
+            description: Some("缺陷描述".into()),
+            status: "open".into(),
+            severity: "major".into(),
+            requirement_id: None,
+            created_by: Some("u_1".into()),
+            created_at: dt(0),
+            updated_at: dt(0),
+            requirement: Some(DefectRequirementLink {
+                id: "req_1".into(),
+                description: "需求描述".into(),
+                status: "pending".into(),
+            }),
+            creator: Some(DefectCreator {
+                id: "u_1".into(),
+                nickname: Some("alice".into()),
+                qq: None,
+                email: Some("alice@example.com".into()),
+            }),
+        };
+
+        let v = defect_dto(&row);
+        assert_eq!(v["createdBy"], "u_1");
+        assert_eq!(v["creator"]["id"], "u_1");
+        assert_eq!(v["creator"]["nickname"], "alice");
+        assert_eq!(v["creator"]["email"], "alice@example.com");
+        // requirement 关联不受 creator 影响
+        assert_eq!(v["requirement"]["id"], "req_1");
+    }
+
+    #[test]
+    fn defect_dto_creator_is_null_when_absent() {
+        let row = DefectRow {
+            id: "def_1".into(),
+            project_id: "p_1".into(),
+            description: None,
+            status: "open".into(),
+            severity: "minor".into(),
+            requirement_id: None,
+            created_by: None,
+            created_at: dt(0),
+            updated_at: dt(0),
+            requirement: None,
+            creator: None,
+        };
+        let v = defect_dto(&row);
+        assert_eq!(v["createdBy"], Value::Null);
+        assert_eq!(v["creator"], Value::Null);
+    }
 }
