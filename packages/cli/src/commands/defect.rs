@@ -20,11 +20,7 @@ enum DefectCmd {
         #[arg(long)]
         severity: Option<String>,
         #[arg(long)]
-        application: Option<String>,
-        #[arg(long)]
         req: Option<String>,
-        #[arg(long)]
-        feature: Option<String>,
         #[arg(long)]
         q: Option<String>,
         #[arg(long)]
@@ -36,30 +32,21 @@ enum DefectCmd {
         json: bool,
     },
     Create {
-        #[arg(long)]
-        title: String,
-        #[arg(long)]
-        description: Option<String>,
+        /// 缺陷描述（--title 为兼容旧用法的别名，后端已无独立 title 字段）
+        #[arg(long, alias = "title")]
+        description: String,
         #[arg(long)]
         status: Option<String>,
         #[arg(long)]
         severity: Option<String>,
         #[arg(long)]
         req: Option<String>,
-        #[arg(long)]
-        feature: Option<String>,
-        #[arg(long)]
-        application: Option<String>,
-        #[arg(long)]
-        module: Option<String>,
         #[arg(long)]
         json: bool,
     },
     Update {
         id: String,
         #[arg(long)]
-        title: Option<String>,
-        #[arg(long)]
         description: Option<String>,
         #[arg(long)]
         status: Option<String>,
@@ -67,12 +54,6 @@ enum DefectCmd {
         severity: Option<String>,
         #[arg(long)]
         req: Option<String>,
-        #[arg(long)]
-        feature: Option<String>,
-        #[arg(long)]
-        application: Option<String>,
-        #[arg(long)]
-        module: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -89,26 +70,20 @@ enum DefectCmd {
     },
 }
 
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FeatureRef {
-    slug: String,
-    chinese_name: String,
-}
-
+/// 缺陷响应结构（与后端 `defect_dto` 对齐）。
+///
+/// 后端在 2026-08-14 迁移中删除了 defect.title / application / module 列，
+/// 旧版 CLI 仍要求 `title: String`（非空），导致反序列化报
+/// "missing field `title`"，统一表现为"解析响应失败：error decoding response body"。
 #[derive(Debug, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DefectSummary {
     id: String,
-    title: String,
     description: Option<String>,
     status: String,
     severity: String,
     requirement_id: Option<String>,
-    application: Option<String>,
-    module: Option<String>,
     created_at: String,
-    feature: Option<FeatureRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +120,16 @@ fn severity_label(severity: &str) -> &str {
     }
 }
 
+/// 按字符数截断，超出部分用省略号表示。
+fn truncate(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        s.to_string()
+    } else {
+        format!("{}…", chars[..max_chars].iter().collect::<String>())
+    }
+}
+
 fn print_defect(d: &DefectSummary) {
     println!(
         "{}  [{}/{}]",
@@ -152,21 +137,12 @@ fn print_defect(d: &DefectSummary) {
         severity_label(&d.severity),
         status_label(&d.status)
     );
-    println!("标题：{}", d.title);
-    if let Some(a) = &d.application {
-        println!("应用：{a}");
-    }
-    if let Some(m) = &d.module {
-        println!("模块：{m}");
-    }
-    if let Some(desc) = &d.description {
-        println!("描述：{desc}");
+    match &d.description {
+        Some(desc) if !desc.is_empty() => println!("描述：{desc}"),
+        _ => println!("描述：(无)"),
     }
     if let Some(req) = &d.requirement_id {
         println!("关联需求：{req}");
-    }
-    if let Some(f) = &d.feature {
-        println!("关联特性：{}  {}", f.slug, f.chinese_name);
     }
     println!("创建时间：{}", d.created_at);
 }
@@ -176,9 +152,7 @@ pub fn run(args: DefectArgs) -> CmdResult {
         DefectCmd::List {
             status,
             severity,
-            application,
             req,
-            feature,
             q,
             json,
         } => {
@@ -191,14 +165,8 @@ pub fn run(args: DefectArgs) -> CmdResult {
             if let Some(s) = severity {
                 params.push(format!("severity={}", urlencoding::encode(&s)));
             }
-            if let Some(a) = application {
-                params.push(format!("application={}", urlencoding::encode(&a)));
-            }
             if let Some(r) = req {
                 params.push(format!("requirementId={}", urlencoding::encode(&r)));
-            }
-            if let Some(f) = feature {
-                params.push(format!("featureId={}", urlencoding::encode(&f)));
             }
             if let Some(q) = q {
                 params.push(format!("q={}", urlencoding::encode(&q)));
@@ -224,24 +192,13 @@ pub fn run(args: DefectArgs) -> CmdResult {
                 return Ok(());
             }
             for d in data {
-                let mut tags = Vec::new();
-                if let Some(a) = &d.application {
-                    tags.push(a.as_str());
-                }
-                if let Some(m) = &d.module {
-                    tags.push(m.as_str());
-                }
-                let tag_part = if tags.is_empty() {
-                    String::new()
-                } else {
-                    format!("  [{}]", tags.join("/"))
-                };
+                let desc = d.description.as_deref().unwrap_or("(无描述)");
                 println!(
-                    "{}  {}/{}{tag_part}  {}",
+                    "{}  {}/{}  {}",
                     d.id,
                     severity_label(&d.severity),
                     status_label(&d.status),
-                    d.title
+                    truncate(desc, 60)
                 );
             }
             Ok(())
@@ -269,23 +226,16 @@ pub fn run(args: DefectArgs) -> CmdResult {
             Ok(())
         }
         DefectCmd::Create {
-            title,
             description,
             status,
             severity,
             req,
-            feature,
-            application,
-            module,
             json,
         } => {
             let config = load_config();
             let api = ApiClient::new(&config)?;
             let mut body = Map::new();
-            body.insert("title".into(), json!(title));
-            if let Some(d) = description {
-                body.insert("description".into(), json!(d));
-            }
+            body.insert("description".into(), json!(description));
             if let Some(s) = status {
                 body.insert("status".into(), json!(s));
             }
@@ -294,15 +244,6 @@ pub fn run(args: DefectArgs) -> CmdResult {
             }
             if let Some(r) = req {
                 body.insert("requirementId".into(), json!(r));
-            }
-            if let Some(f) = feature {
-                body.insert("featureId".into(), json!(f));
-            }
-            if let Some(a) = application {
-                body.insert("application".into(), json!(a));
-            }
-            if let Some(m) = module {
-                body.insert("module".into(), json!(m));
             }
             let result: ItemResponse = api.post(
                 &format!("/projects/{}/defects", config.project_id),
@@ -323,27 +264,22 @@ pub fn run(args: DefectArgs) -> CmdResult {
                 severity_label(&data.severity),
                 status_label(&data.status)
             );
-            println!("  标题：{}", data.title);
+            if let Some(desc) = &data.description {
+                println!("  描述：{}", truncate(desc, 80));
+            }
             Ok(())
         }
         DefectCmd::Update {
             id,
-            title,
             description,
             status,
             severity,
             req,
-            feature,
-            application,
-            module,
             json,
         } => {
             let config = load_config();
             let api = ApiClient::new(&config)?;
             let mut body = Map::new();
-            if let Some(t) = title {
-                body.insert("title".into(), json!(t));
-            }
             if let Some(d) = description {
                 body.insert("description".into(), json!(d));
             }
@@ -356,18 +292,9 @@ pub fn run(args: DefectArgs) -> CmdResult {
             if let Some(r) = req {
                 body.insert("requirementId".into(), json!(r));
             }
-            if let Some(f) = feature {
-                body.insert("featureId".into(), json!(f));
-            }
-            if let Some(a) = application {
-                body.insert("application".into(), json!(a));
-            }
-            if let Some(m) = module {
-                body.insert("module".into(), json!(m));
-            }
             if body.is_empty() {
                 return Err(CmdError::new(
-                    "请提供至少一个要更新的字段（--title、--description、--status、--severity、--req、--feature、--application 或 --module）",
+                    "请提供至少一个要更新的字段（--description、--status、--severity 或 --req）",
                 ));
             }
             let result: ItemResponse = api.patch(
