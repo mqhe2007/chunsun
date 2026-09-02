@@ -16,7 +16,7 @@ type WorkflowAction = {
   outlined?: boolean;
 };
 
-const DASHBOARD_TAB_RE = /\/(overview|requirements|defects)(\/|$)/;
+const DASHBOARD_TAB_RE = /\/(overview|requirements|defects|dependencies)(\/|$)/;
 
 const route = useRoute();
 const router = useRouter();
