@@ -10,7 +10,7 @@
 
 <h1 align="center">春笋 · ChunSun</h1>
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v0.4.7-0F6E56" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.5.0-0F6E56" />
   <img alt="lang" src="https://img.shields.io/badge/lang-Rust%20%2F%20Vue-0F6E56" />
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%2F%20Linux%20%2F%20Windows-0F6E56" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green" />
