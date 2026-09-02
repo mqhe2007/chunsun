@@ -197,11 +197,132 @@ async fn remove(
     })))
 }
 
+fn schedule_node_dto(n: &dep_service::ScheduleNode) -> Value {
+    json!({
+        "id": n.id,
+        "kind": n.kind.as_str(),
+        "description": n.description,
+        "status": n.status,
+        "done": n.done(),
+    })
+}
+
+fn blocked_status_dto(b: &dep_service::BlockedStatus) -> Value {
+    json!({
+        "node": schedule_node_dto(&b.node),
+        "blocked": b.blocked,
+        "blockers": b.blockers.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+        "completedBlockers": b.completed_blockers.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+    })
+}
+
+/// GET 全项目调度分析（拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合）。
+///
+/// 供 Agent 在交付前做依赖检查与调度决策：
+/// - `levels`：拓扑分层，每层内节点可并行，层间串行（不含已完成节点）。
+/// - `criticalPath`：未完成节点中的关键路径（最长依赖链）。
+/// - `blocked`：各未完成节点的阻塞状态（blocked / blockers 阻塞原因 / completedBlockers）。
+/// - `ready`：当前无未完成前置、可直接执行的节点。
+/// - `stats`：total / done / pending / blocked / ready 统计。
+async fn get_schedule(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let analysis = dep_service::analyze_schedule(
+        &state.pool(),
+        &project_id,
+        &session.user.user_id,
+        session.user.role == "ADMIN",
+    )
+    .await?;
+
+    Ok(ok(json!({
+        "levels": analysis.levels.iter().map(|l| {
+            l.iter().map(schedule_node_dto).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        "criticalPath": analysis.critical_path.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+        "blocked": analysis.blocked.iter().map(blocked_status_dto).collect::<Vec<_>>(),
+        "ready": analysis.ready.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+        "stats": json!({
+            "total": analysis.stats.total,
+            "done": analysis.stats.done,
+            "pending": analysis.stats.pending,
+            "blocked": analysis.stats.blocked,
+            "ready": analysis.stats.ready,
+        }),
+    })))
+}
+
+/// GET 单节点阻塞状态：是否被阻塞 + 阻塞原因（未完成前置）+ 是否可执行。
+async fn get_node_blocked(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path((project_id, node_type, node_id)): Path<(String, String, String)>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    if !NODE_TYPES.contains(&node_type.as_str()) {
+        return Err(AppError::unprocessable("VALIDATION_ERROR")
+            .with_message("nodeType 只能是 requirement / defect 之一"));
+    }
+
+    let status = dep_service::get_node_blocked_status(
+        &state.pool(),
+        &project_id,
+        &session.user.user_id,
+        session.user.role == "ADMIN",
+        &node_type,
+        &node_id,
+    )
+    .await?;
+
+    Ok(ok(blocked_status_dto(&status)))
+}
+
+/// GET 解锁分析：模拟某节点完成后，其直接下游中哪些解锁、哪些仍被阻塞。
+async fn get_unlock(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path((project_id, node_type, node_id)): Path<(String, String, String)>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    if !NODE_TYPES.contains(&node_type.as_str()) {
+        return Err(AppError::unprocessable("VALIDATION_ERROR")
+            .with_message("nodeType 只能是 requirement / defect 之一"));
+    }
+
+    let unlock = dep_service::analyze_unlock(
+        &state.pool(),
+        &project_id,
+        &session.user.user_id,
+        session.user.role == "ADMIN",
+        &node_type,
+        &node_id,
+    )
+    .await?;
+
+    Ok(ok(json!({
+        "node": schedule_node_dto(&unlock.node),
+        "unlocked": unlock.unlocked.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+        "stillBlocked": unlock.still_blocked.iter().map(schedule_node_dto).collect::<Vec<_>>(),
+    })))
+}
+
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route(
             "/projects/{projectId}/dependencies",
             get(list_all).post(add),
+        )
+        .route(
+            "/projects/{projectId}/dependencies/schedule",
+            get(get_schedule),
+        )
+        .route(
+            "/projects/{projectId}/dependencies/{nodeType}/{nodeId}/blocked",
+            get(get_node_blocked),
+        )
+        .route(
+            "/projects/{projectId}/dependencies/{nodeType}/{nodeId}/unlock",
+            get(get_unlock),
         )
         .route(
             "/projects/{projectId}/dependencies/{nodeType}/{nodeId}",

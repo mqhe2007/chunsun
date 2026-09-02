@@ -378,3 +378,315 @@ where
     }
     Ok(out)
 }
+
+// ─────────────────────────────────────────────────────────────
+// Agent 依赖感知与调度（DAG 任务执行编排）
+//
+// 语义约定（与 dependency_graph.rs 一致，source → target = source blocks target）：
+// - 「完成」判定：requirement status == "completed"；defect status ∈ {resolved, closed}。
+// - 「被阻塞」：节点存在任一未完成的直接前置（Blocked By 中存在非完成节点）。
+// - 「可执行」：节点的所有直接前置均已完成。
+// ─────────────────────────────────────────────────────────────
+
+/// 节点「是否已完成」判定（需求 completed；缺陷 resolved/closed）。
+pub fn node_is_done(kind: &NodeKind, status: &str) -> bool {
+    match kind {
+        NodeKind::Requirement => status == "completed",
+        NodeKind::Defect => matches!(status, "resolved" | "closed"),
+    }
+}
+
+/// 调度分析用节点（含状态）。
+#[derive(Debug, Clone)]
+pub struct ScheduleNode {
+    pub id: String,
+    pub kind: NodeKind,
+    pub description: Option<String>,
+    pub status: String,
+}
+
+impl ScheduleNode {
+    pub fn done(&self) -> bool {
+        node_is_done(&self.kind, &self.status)
+    }
+
+    pub fn node(&self) -> Node {
+        Node {
+            kind: self.kind,
+            id: self.id.clone(),
+        }
+    }
+}
+
+/// 单节点阻塞状态（供 Agent 判断「是否被阻塞」「阻塞原因」「是否可执行」）。
+#[derive(Debug, Clone)]
+pub struct BlockedStatus {
+    pub node: ScheduleNode,
+    /// 是否被阻塞（存在未完成前置）。
+    pub blocked: bool,
+    /// 未完成前置（Blocked By 中非完成的直接前置）——阻塞原因。
+    pub blockers: Vec<ScheduleNode>,
+    /// 已完成前置（不阻塞）。
+    pub completed_blockers: Vec<ScheduleNode>,
+}
+
+/// 全项目调度分析结果。
+#[derive(Debug, Clone)]
+pub struct ScheduleAnalysis {
+    /// 拓扑分层：每层内的节点互无依赖、可并行；层间按序串行。不含已完成节点。
+    pub levels: Vec<Vec<ScheduleNode>>,
+    /// 未完成节点中的关键路径（最长依赖链）。
+    pub critical_path: Vec<ScheduleNode>,
+    /// 各未完成节点的阻塞状态。
+    pub blocked: Vec<BlockedStatus>,
+    /// 当前可执行（无未完成前置）的未完成节点。
+    pub ready: Vec<ScheduleNode>,
+    /// 统计。
+    pub stats: ScheduleStats,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ScheduleStats {
+    pub total: usize,
+    pub done: usize,
+    pub pending: usize,
+    pub blocked: usize,
+    pub ready: usize,
+}
+
+/// 解锁分析：模拟某节点完成后，其直接下游中哪些解锁。
+#[derive(Debug, Clone)]
+pub struct UnlockAnalysis {
+    /// 刚完成的节点。
+    pub node: ScheduleNode,
+    /// 解锁的直接下游（所有前置已完成，进入可执行状态）。
+    pub unlocked: Vec<ScheduleNode>,
+    /// 仍被阻塞的直接下游（存在其他未完成前置）。
+    pub still_blocked: Vec<ScheduleNode>,
+}
+
+/// 拉取项目内全部节点（需求 + 缺陷），统一成 `ScheduleNode`。
+async fn load_all_nodes(pool: &PgPool, project_id: &str) -> Result<Vec<ScheduleNode>, AppError> {
+    let reqs = requirement::list_requirements_by_project(
+        pool,
+        project_id,
+        requirement::RequirementListFilters::default(),
+    )
+    .await?;
+    let defects = defect::list_defects_by_project(pool, project_id, defect::DefectListFilters::default())
+        .await?;
+
+    let mut out = Vec::with_capacity(reqs.items.len() + defects.len());
+    for r in reqs.items {
+        out.push(ScheduleNode {
+            id: r.id,
+            kind: NodeKind::Requirement,
+            description: Some(r.description),
+            status: r.status,
+        });
+    }
+    for d in defects {
+        out.push(ScheduleNode {
+            id: d.id,
+            kind: NodeKind::Defect,
+            description: d.description,
+            status: d.status,
+        });
+    }
+    Ok(out)
+}
+
+fn build_graph_from_rows(rows: &[dependency::DependencyRow]) -> DependencyGraph {
+    DependencyGraph::from_edges(rows.iter().map(|r| Edge {
+        source: Node {
+            kind: parse_kind(&r.source_type).expect("db kind valid"),
+            id: r.source_id.clone(),
+        },
+        target: Node {
+            kind: parse_kind(&r.target_type).expect("db kind valid"),
+            id: r.target_id.clone(),
+        },
+    }))
+}
+
+/// 已完成节点集合（HashSet<Node>）。
+fn done_set(nodes: &[ScheduleNode]) -> std::collections::HashSet<Node> {
+    nodes.iter().filter(|n| n.done()).map(|n| n.node()).collect()
+}
+
+fn node_map(nodes: &[ScheduleNode]) -> std::collections::HashMap<Node, ScheduleNode> {
+    nodes.iter().map(|n| (n.node(), n.clone())).collect()
+}
+
+/// 计算单节点阻塞状态。
+fn compute_blocked_status(
+    node: &ScheduleNode,
+    graph: &DependencyGraph,
+    by_node: &std::collections::HashMap<Node, ScheduleNode>,
+) -> BlockedStatus {
+    let mut blockers = Vec::new();
+    let mut completed_blockers = Vec::new();
+    for pred in graph.direct_predecessors(&node.node()) {
+        if let Some(p) = by_node.get(&pred) {
+            if p.done() {
+                completed_blockers.push(p.clone());
+            } else {
+                blockers.push(p.clone());
+            }
+        }
+    }
+    BlockedStatus {
+        node: node.clone(),
+        blocked: !blockers.is_empty(),
+        blockers,
+        completed_blockers,
+    }
+}
+
+/// GET 全项目调度分析（拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合）。
+pub async fn analyze_schedule(
+    pool: &PgPool,
+    project_id: &str,
+    user_id: &str,
+    is_admin: bool,
+) -> Result<ScheduleAnalysis, AppError> {
+    let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+
+    let rows = dependency::list_all_in_project(pool, &project_id).await?;
+    let graph = build_graph_from_rows(&rows);
+    let all_nodes = load_all_nodes(pool, &project_id).await?;
+    let done = done_set(&all_nodes);
+    let by_node = node_map(&all_nodes);
+
+    // 拓扑分层（未完成节点）
+    let levels: Vec<Vec<ScheduleNode>> = graph
+        .schedule_levels(&done)
+        .into_iter()
+        .map(|level| {
+            let mut nodes: Vec<ScheduleNode> = level
+                .into_iter()
+                .filter_map(|n| by_node.get(&n).cloned())
+                .collect();
+            nodes.sort_by(|a, b| a.id.cmp(&b.id));
+            nodes
+        })
+        .collect();
+
+    // 关键路径（未完成节点）
+    let critical_path: Vec<ScheduleNode> = graph
+        .critical_path(&done)
+        .into_iter()
+        .filter_map(|n| by_node.get(&n).cloned())
+        .collect();
+
+    // 阻塞状态：所有未完成节点
+    let mut blocked: Vec<BlockedStatus> = all_nodes
+        .iter()
+        .filter(|n| !n.done())
+        .map(|n| compute_blocked_status(n, &graph, &by_node))
+        .collect();
+    blocked.sort_by(|a, b| a.node.id.cmp(&b.node.id));
+
+    let ready: Vec<ScheduleNode> = blocked
+        .iter()
+        .filter(|b| !b.blocked)
+        .map(|b| b.node.clone())
+        .collect();
+
+    let stats = ScheduleStats {
+        total: all_nodes.len(),
+        done: done.len(),
+        pending: all_nodes.len() - done.len(),
+        blocked: blocked.iter().filter(|b| b.blocked).count(),
+        ready: ready.len(),
+    };
+
+    Ok(ScheduleAnalysis {
+        levels,
+        critical_path,
+        blocked,
+        ready,
+        stats,
+    })
+}
+
+/// GET 单节点阻塞状态：是否被阻塞 + 阻塞原因（未完成前置）+ 是否可执行。
+pub async fn get_node_blocked_status(
+    pool: &PgPool,
+    project_id: &str,
+    user_id: &str,
+    is_admin: bool,
+    node_type: &str,
+    node_id: &str,
+) -> Result<BlockedStatus, AppError> {
+    let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+    let kind = parse_kind(node_type).ok_or(DependencyFailure::SourceNotFound)?;
+
+    if !node_exists(pool, &project_id, kind, node_id).await? {
+        return Err(DependencyFailure::SourceNotFound.into());
+    }
+
+    let rows = dependency::list_all_in_project(pool, &project_id).await?;
+    let graph = build_graph_from_rows(&rows);
+    let all_nodes = load_all_nodes(pool, &project_id).await?;
+    let by_node = node_map(&all_nodes);
+
+    let node = by_node
+        .get(&Node { kind, id: node_id.to_string() })
+        .cloned()
+        .ok_or(DependencyFailure::SourceNotFound)?;
+
+    Ok(compute_blocked_status(&node, &graph, &by_node))
+}
+
+/// GET 解锁分析：模拟某节点完成后，其直接下游中哪些解锁、哪些仍被阻塞。
+pub async fn analyze_unlock(
+    pool: &PgPool,
+    project_id: &str,
+    user_id: &str,
+    is_admin: bool,
+    node_type: &str,
+    node_id: &str,
+) -> Result<UnlockAnalysis, AppError> {
+    let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+    let kind = parse_kind(node_type).ok_or(DependencyFailure::SourceNotFound)?;
+
+    if !node_exists(pool, &project_id, kind, node_id).await? {
+        return Err(DependencyFailure::SourceNotFound.into());
+    }
+
+    let rows = dependency::list_all_in_project(pool, &project_id).await?;
+    let graph = build_graph_from_rows(&rows);
+    let all_nodes = load_all_nodes(pool, &project_id).await?;
+    let mut done = done_set(&all_nodes);
+    done.insert(Node { kind, id: node_id.to_string() });
+
+    let by_node = node_map(&all_nodes);
+    let node = by_node
+        .get(&Node { kind, id: node_id.to_string() })
+        .cloned()
+        .ok_or(DependencyFailure::SourceNotFound)?;
+
+    let unlocked_nodes = graph.unlockable_after(&node.node(), &done);
+    let mut unlocked: Vec<ScheduleNode> = unlocked_nodes
+        .into_iter()
+        .filter_map(|n| by_node.get(&n).cloned())
+        .collect();
+    unlocked.sort_by(|a, b| a.id.cmp(&b.id));
+
+    // 仍被阻塞的直接下游：未被解锁但存在该节点出边指向的未完成节点
+    let mut still_blocked: Vec<ScheduleNode> = graph
+        .direct_successors(&node.node())
+        .into_iter()
+        .filter(|n| !done.contains(n))
+        .filter(|n| !unlocked.iter().any(|u| &u.node() == n))
+        .filter_map(|n| by_node.get(&n).cloned())
+        .collect();
+    still_blocked.sort_by(|a, b| a.id.cmp(&b.id));
+
+    Ok(UnlockAnalysis {
+        node,
+        unlocked,
+        still_blocked,
+    })
+}

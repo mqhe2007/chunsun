@@ -80,7 +80,15 @@ argument-hint: '<requirement-id>'
   2. 开新 Run：chunsun run start <ID>
      - 若报已有 Run 在跑（撞锁）：向用户展示最后活跃时间，用户确认后
        chunsun run takeover <ID>（僵尸 Run 人工接管），再 start
-  3. 进入循环：
+  3. 执行前依赖检查（Agent 依赖感知与调度，见「依赖调度」节）：
+     a. chunsun dependency blocked requirement <ID>  查询本需求是否被阻塞
+     b. 若被阻塞（blocked=true）：
+        - 不进入执行队列；把阻塞原因与未完成前置列表写入工作记忆
+          （requirement memory put <ID> --snapshot '{"dependencySnapshot":{...}}'）
+        - chunsun run status <ID> --status finished --reason "被前置任务阻塞：<前置列表>"，停
+        - 向用户展示阻塞原因与前置任务，等待前置完成后再次 /chunsun
+     c. 未被阻塞才继续执行
+  4. 进入循环：
      a. 决策下一步 Step kind（think / code / test / verify / ask_user / info / reflect）
      b. 执行 Step；涉及验收变化时 upsert 场景/用例并回写状态
         - 若需要某 lazy 知识文档的内容：chunsun knowledge doc <docId> --json 按需拉取
@@ -92,15 +100,36 @@ argument-hint: '<requirement-id>'
         - 有 open decisions 堆积 → 优先向用户确认
         - 长轮次无 test/verify → 注意验收闭环
         - 有 code Step 且无 reflect → 关键环节做一次评审-反思-改进（见「RRI」节）
-     e. 停点检查：
+     e. 调度决策（依赖感知）：chunsun dependency schedule 可随时查询全局拓扑，
+        识别可并行任务与关键路径；多需求场景下按拓扑顺序推进，优先解锁瓶颈
+     f. 停点检查：
         - 所有场景 passing 或 waived 且无 open decisions → chunsun run status <ID> --status completed
         - ask_user 产生 open decision → chunsun run status <ID> --status finished --reason <问题>，停
         - 用户会话内抢话打断 → 当前 Step 收尾后置 finished（--reason 说明打断），停
         - 否则回 a
-  4. 收尾/完成时输出：本轮 Step 摘要 + 验收状态 + 下一步建议
+  5. 完成后解锁下游（依赖感知）：
+     - chunsun dependency unlock requirement <ID>  查询本需求完成后解锁哪些下游
+     - 将解锁结果写入工作记忆，若下游任务在待办清单中，提醒其可进入执行
+  6. 收尾/完成时输出：本轮 Step 摘要 + 验收状态 + 依赖解锁情况 + 下一步建议
 ```
 
 **停点只有三种**（验收全绿 / 需用户决策 / 用户打断）与 completed 平台硬条件见 `references/loop-rules.md`「停点」；平台拒绝时返回 COMPLETION_GATE_NOT_MET，不要绕过。
+
+## 依赖调度（Agent 依赖感知与调度）
+
+本需求交付的核心：Agent 在自主交付时**真正消费 DAG 依赖做调度**，而非只让依赖关系停留在展示层。
+
+- **执行前依赖检查**：领取/执行任何需求或缺陷前，先 `chunsun dependency blocked requirement|defect <ID>` 查依赖。
+  - `blocked=true` → 任务被阻塞，**不进入执行队列**；向用户展示阻塞原因与前置任务列表（未完成前置），写工作记忆并停（finished）。
+  - `blocked=false` → 可执行。
+- **拓扑排序与调度**：`chunsun dependency schedule` 输出全项目拓扑分层（每层可并行、层间串行）、关键路径、各节点阻塞状态与可执行集合。
+  - 可并行推进同层无依赖节点；必须按拓扑顺序串行执行依赖链。
+  - 识别关键路径（最长依赖链），优先推进瓶颈任务。
+- **自动解锁**：任务完成（completed）后 `chunsun dependency unlock requirement|defect <ID>` 检查下游：
+  - 下游所有前置已完成 → 自动解锁，可进入执行；
+  - 仍被阻塞（有其他未完成前置）→ 记录仍阻塞原因。
+- **阻塞原因入工作记忆**：被阻塞任务必须在 Memory 的 `dependencySnapshot` 中记录阻塞原因与前置任务列表（验收标准：明确留痕）。
+- **节点完成语义**：requirement 状态 `completed` 视为完成；defect 状态 `resolved` / `closed` 视为完成。
 
 ## Memory（工作记忆）
 
@@ -170,6 +199,9 @@ chunsun step add <需求ID> --run <runId> --kind <think|code|test|verify|ask_use
 chunsun scenario list|upsert|status
 chunsun case list|upsert|status
 chunsun requirement memory get|put <需求ID>
+chunsun dependency list|schedule                                  # 依赖边 / 全项目调度分析
+chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
+chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析
 chunsun knowledge [--json]
 chunsun reset <需求ID>
 chunsun fix <缺陷ID>

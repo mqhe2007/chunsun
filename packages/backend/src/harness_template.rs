@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 /// 当前模板版本号。技能 / 斜线命令 / 自主交付协议有结构性改动时必须递增。
 /// 与 `templates/VERSION` 及 CLI `TEMPLATE_VERSION` 保持一致。
-pub const TEMPLATE_VERSION: &str = "2026-08-27-knowledge-load-strategy";
+pub const TEMPLATE_VERSION: &str = "2026-09-02-dependency-scheduling";
 
 const SKILL: &str = include_str!("../templates/skill.md");
 const LOOP_RULES: &str = include_str!("../templates/loop-rules.md");

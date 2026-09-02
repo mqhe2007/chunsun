@@ -35,6 +35,8 @@ enum Commands {
     Requirement(commands::requirement::RequirementArgs),
     /// 管理项目缺陷
     Defect(commands::defect::DefectArgs),
+    /// 依赖关系与调度分析（DAG：Blocking / Blocked By / 拓扑 / 阻塞 / 解锁）
+    Dependency(commands::dependency::DependencyArgs),
     /// 自主交付轮次管理（/chunsun 协议）
     Run(commands::harness::RunArgs),
     /// 自主交付步骤上报
@@ -86,6 +88,7 @@ fn main() -> ExitCode {
         Some(Commands::Env(args)) => commands::env::run(args),
         Some(Commands::Requirement(args)) => commands::requirement::run(args),
         Some(Commands::Defect(args)) => commands::defect::run(args),
+        Some(Commands::Dependency(args)) => commands::dependency::run(args),
         Some(Commands::Run(args)) => commands::harness::run_run(args),
         Some(Commands::Step(args)) => commands::harness::run_step(args),
         Some(Commands::Scenario(args)) => commands::harness::run_scenario(args),

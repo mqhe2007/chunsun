@@ -1,5 +1,6 @@
 
 pub mod defect;
+pub mod dependency;
 pub mod env;
 
 

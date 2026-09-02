@@ -125,14 +125,12 @@ impl DependencyGraph {
     }
 
     /// 返回 `node` 的所有直接后继（直接阻塞的对象）。
-    #[allow(dead_code)]
     pub fn direct_successors(&self, node: &Node) -> Vec<Node> {
         self.outgoing.get(node).cloned().unwrap_or_default()
     }
 
     /// 返回 `node` 的所有直接前驱（直接阻塞它的对象）。
     /// 由反向遍历整图得出，适合小规模图；数据量大时应走 DB 的 `idx_dependency_target` 索引。
-    #[allow(dead_code)]
     pub fn direct_predecessors(&self, node: &Node) -> Vec<Node> {
         self.outgoing
             .iter()
@@ -140,6 +138,152 @@ impl DependencyGraph {
                 targets.iter().any(|t| t == node).then(|| src.clone())
             })
             .collect()
+    }
+
+    /// 图中出现的全部节点（出边源 + 出边目标，去重）。
+    pub fn all_nodes(&self) -> Vec<Node> {
+        let mut set = std::collections::HashSet::new();
+        for (src, targets) in &self.outgoing {
+            set.insert(src.clone());
+            for t in targets {
+                set.insert(t.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+
+    /// 未完成节点的拓扑分层调度（Kahn 算法）。
+    ///
+    /// `done` = 已完成节点集合（视为已满足的前置，不再阻塞）。
+    /// 返回的每层节点互无阻塞关系、可并行执行；层内顺序任意，层间按序串行。
+    /// 已完成的节点不出现在输出中。
+    pub fn schedule_levels(&self, done: &std::collections::HashSet<Node>) -> Vec<Vec<Node>> {
+        let all = self.all_nodes();
+        // 阻塞计数：每个未完成节点 = 其「未完成」直接前驱的数量
+        let mut indegree: std::collections::HashMap<Node, usize> = all
+            .iter()
+            .filter(|n| !done.contains(*n))
+            .map(|n| (n.clone(), self.direct_predecessors(n).iter().filter(|p| !done.contains(*p)).count()))
+            .collect();
+
+        let mut levels: Vec<Vec<Node>> = Vec::new();
+        loop {
+            let ready: Vec<Node> = indegree
+                .iter()
+                .filter(|(_, deg)| **deg == 0)
+                .map(|(n, _)| n.clone())
+                .collect();
+            if ready.is_empty() {
+                break;
+            }
+            for n in &ready {
+                indegree.remove(n);
+                // 减少其后继的入度
+                if let Some(nexts) = self.outgoing.get(n) {
+                    for succ in nexts {
+                        if let Some(deg) = indegree.get_mut(succ) {
+                            if *deg > 0 {
+                                *deg -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+            levels.push(ready);
+        }
+        levels
+    }
+
+    /// 未完成节点中的关键路径（最长依赖链）。
+    ///
+    /// 返回该路径上的节点序列（从无未完成前驱的起点到无未完成后继的终点）。
+    /// `done` = 已完成节点（不参与关键路径）。
+    /// 无未完成节点时返回空；多路径同长时取其中一条（按 id 排序取稳定结果）。
+    pub fn critical_path(&self, done: &std::collections::HashSet<Node>) -> Vec<Node> {
+        let all: Vec<Node> = self
+            .all_nodes()
+            .into_iter()
+            .filter(|n| !done.contains(n))
+            .collect();
+        if all.is_empty() {
+            return Vec::new();
+        }
+
+        // 记忆化 DFS：从 node 出发的最长链（含 node 自身）
+        fn longest(
+            g: &DependencyGraph,
+            node: &Node,
+            done: &std::collections::HashSet<Node>,
+            memo: &mut std::collections::HashMap<Node, Vec<Node>>,
+        ) -> Vec<Node> {
+            if let Some(cached) = memo.get(node) {
+                return cached.clone();
+            }
+            let nexts: Vec<&Node> = g
+                .outgoing
+                .get(node)
+                .map(|v| v.iter().collect())
+                .unwrap_or_default();
+            let mut best: Vec<Node> = Vec::new();
+            for n in nexts {
+                if done.contains(n) {
+                    continue;
+                }
+                let chain = longest(g, n, done, memo);
+                if chain.len() > best.len()
+                    || (chain.len() == best.len()
+                        && chain.iter().map(|x| x.id.as_str()).lt(best.iter().map(|x| x.id.as_str())))
+                {
+                    best = chain;
+                }
+            }
+            let mut path = vec![node.clone()];
+            path.extend(best);
+            memo.insert(node.clone(), path.clone());
+            path
+        }
+
+        let mut memo = std::collections::HashMap::new();
+        let mut best_path: Vec<Node> = Vec::new();
+        for n in &all {
+            let chain = longest(self, n, done, &mut memo);
+            if chain.len() > best_path.len()
+                || (chain.len() == best_path.len()
+                    && chain.iter().map(|x| x.id.as_str()).lt(best_path.iter().map(|x| x.id.as_str())))
+            {
+                best_path = chain;
+            }
+        }
+        best_path
+    }
+
+    /// 模拟某节点完成后的解锁计算。
+    ///
+    /// `completed` = 刚完成的节点。返回其**直接下游**中，所有直接前驱都已完成的节点
+    /// （即从「被阻塞」解锁、可进入执行状态的任务）。
+    /// `done` 需已包含 `completed`。
+    pub fn unlockable_after(
+        &self,
+        completed: &Node,
+        done: &std::collections::HashSet<Node>,
+    ) -> Vec<Node> {
+        let mut out = Vec::new();
+        if let Some(nexts) = self.outgoing.get(completed) {
+            for succ in nexts {
+                if done.contains(succ) {
+                    continue;
+                }
+                let all_preds_done = self
+                    .direct_predecessors(succ)
+                    .iter()
+                    .all(|p| done.contains(p));
+                if all_preds_done {
+                    out.push(succ.clone());
+                }
+            }
+        }
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
     }
 }
 
@@ -220,5 +364,117 @@ mod tests {
         assert_eq!(NodeKind::parse("defect"), Some(NodeKind::Defect));
         assert_eq!(NodeKind::parse("bogus"), None);
         assert_eq!(NodeKind::Requirement.as_str(), "requirement");
+    }
+
+    fn done_set(nodes: Vec<Node>) -> std::collections::HashSet<Node> {
+        nodes.into_iter().collect()
+    }
+
+    #[test]
+    fn schedule_levels_basic_dag() {
+        // A → B → C；A → D
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("B"));
+        g.add_edge(req("B"), req("C"));
+        g.add_edge(req("A"), req("D"));
+        let done = done_set(vec![]);
+        let levels = g.schedule_levels(&done);
+        // 层1: A；层2: B, D；层3: C
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec![req("A")]);
+        let mut l1 = levels[1].clone();
+        l1.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(l1, vec![req("B"), req("D")]);
+        assert_eq!(levels[2], vec![req("C")]);
+    }
+
+    #[test]
+    fn schedule_levels_skips_done_nodes() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("B"));
+        g.add_edge(req("B"), req("C"));
+        // A 已完成 → 其不再阻塞 B，B 直接可执行
+        let done = done_set(vec![req("A")]);
+        let levels = g.schedule_levels(&done);
+        assert_eq!(levels, vec![vec![req("B")], vec![req("C")]]);
+    }
+
+    #[test]
+    fn schedule_levels_parallel_sources() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("C"));
+        g.add_edge(req("B"), req("C"));
+        let done = done_set(vec![]);
+        let levels = g.schedule_levels(&done);
+        assert_eq!(levels.len(), 2);
+        let mut l0 = levels[0].clone();
+        l0.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(l0, vec![req("A"), req("B")]);
+        assert_eq!(levels[1], vec![req("C")]);
+    }
+
+    #[test]
+    fn critical_path_returns_longest_chain() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("B"));
+        g.add_edge(req("B"), req("C"));
+        g.add_edge(req("A"), req("D"));
+        let done = done_set(vec![]);
+        let path = g.critical_path(&done);
+        // 最长链 A→B→C（3 个）
+        assert_eq!(path, vec![req("A"), req("B"), req("C")]);
+    }
+
+    #[test]
+    fn critical_path_skips_done() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("B"));
+        g.add_edge(req("B"), req("C"));
+        g.add_edge(req("A"), req("D"));
+        // B 已完成 → 最长未完成链 A→D（2 个）或 C 自身
+        let done = done_set(vec![req("B")]);
+        let path = g.critical_path(&done);
+        assert_eq!(path, vec![req("A"), req("D")]);
+    }
+
+    #[test]
+    fn critical_path_empty_when_all_done() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("B"));
+        let done = done_set(vec![req("A"), req("B")]);
+        assert!(g.critical_path(&done).is_empty());
+    }
+
+    #[test]
+    fn unlockable_after_releases_downstream() {
+        let mut g = DependencyGraph::new();
+        // A → B → C；A → D
+        g.add_edge(req("A"), req("B"));
+        g.add_edge(req("B"), req("C"));
+        g.add_edge(req("A"), req("D"));
+        // A 完成后：B、D 均解锁（其唯一前置 A 已完成）
+        let mut done = done_set(vec![req("A")]);
+        let mut unlocked = g.unlockable_after(&req("A"), &done);
+        unlocked.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(unlocked, vec![req("B"), req("D")]);
+        // 再完成 B：C 解锁
+        done.insert(req("B"));
+        assert_eq!(g.unlockable_after(&req("B"), &done), vec![req("C")]);
+    }
+
+    #[test]
+    fn unlockable_requires_all_predecessors() {
+        let mut g = DependencyGraph::new();
+        g.add_edge(req("A"), req("C"));
+        g.add_edge(req("B"), req("C"));
+        // 只完成 A，C 的前置 B 未完成 → 不解锁
+        let done = done_set(vec![req("A")]);
+        assert!(g.unlockable_after(&req("A"), &done).is_empty());
+        // A、B 都完成 → C 解锁
+        let mut done = done_set(vec![req("A"), req("B")]);
+        done.insert(req("B"));
+        let _ = done;
+        let done = done_set(vec![req("A"), req("B")]);
+        assert_eq!(g.unlockable_after(&req("B"), &done), vec![req("C")]);
     }
 }
