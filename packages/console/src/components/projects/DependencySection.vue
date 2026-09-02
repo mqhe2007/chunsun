@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Link2 } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { api } from "@/utils/api";
 
 type DependencyNode = {
@@ -23,6 +24,7 @@ const props = defineProps<{
   nodeId: string;
 }>();
 
+const router = useRouter();
 const summary = ref<DependencySummary | null>(null);
 const loading = ref(false);
 
@@ -45,12 +47,16 @@ async function fetchSummary() {
   }
 }
 
-function nodeLabel(n: DependencyNode): string {
-  return n.description || n.id;
-}
-
 function kindLabel(kind: "requirement" | "defect"): string {
   return kind === "requirement" ? "需求" : "缺陷";
+}
+
+function goToNode(n: DependencyNode) {
+  if (n.kind === "requirement") {
+    void router.push(`/projects/${props.projectId}/requirements/${n.id}`);
+  } else {
+    void router.push(`/projects/${props.projectId}/defects`);
+  }
 }
 
 watch(
@@ -80,28 +86,26 @@ defineExpose({ refresh: fetchSummary });
 
     <div v-else class="dep-grid">
       <div class="dep-col">
-        <h3 class="dep-col-title">阻塞了谁（Blocking）</h3>
-        <ul v-if="blocking.length" class="dep-list">
-          <li v-for="n in blocking" :key="`b-${n.kind}-${n.id}`" class="dep-item">
-            <span class="badge badge-sm" :class="n.kind === 'defect' ? 'badge-warning' : 'badge-info'">
-              {{ kindLabel(n.kind) }}
-            </span>
-            <span class="dep-item-id">{{ n.id }}</span>
-            <span class="dep-item-desc">{{ nodeLabel(n) }}</span>
+        <h3 class="dep-col-title">被谁阻塞</h3>
+        <ul v-if="blockedBy.length" class="dep-list">
+          <li v-for="n in blockedBy" :key="`bb-${n.kind}-${n.id}`">
+            <button type="button" class="dep-pill" :class="n.kind === 'defect' ? 'is-defect' : 'is-requirement'" @click="goToNode(n)">
+              <span class="dep-pill-kind">{{ kindLabel(n.kind) }}</span>
+              <span class="dep-pill-id">{{ n.id }}</span>
+            </button>
           </li>
         </ul>
         <span v-else class="dep-none text-base-content/50">—</span>
       </div>
 
       <div class="dep-col">
-        <h3 class="dep-col-title">被谁阻塞（Blocked By）</h3>
-        <ul v-if="blockedBy.length" class="dep-list">
-          <li v-for="n in blockedBy" :key="`bb-${n.kind}-${n.id}`" class="dep-item">
-            <span class="badge badge-sm" :class="n.kind === 'defect' ? 'badge-warning' : 'badge-info'">
-              {{ kindLabel(n.kind) }}
-            </span>
-            <span class="dep-item-id">{{ n.id }}</span>
-            <span class="dep-item-desc">{{ nodeLabel(n) }}</span>
+        <h3 class="dep-col-title">阻塞谁</h3>
+        <ul v-if="blocking.length" class="dep-list">
+          <li v-for="n in blocking" :key="`b-${n.kind}-${n.id}`">
+            <button type="button" class="dep-pill" :class="n.kind === 'defect' ? 'is-defect' : 'is-requirement'" @click="goToNode(n)">
+              <span class="dep-pill-kind">{{ kindLabel(n.kind) }}</span>
+              <span class="dep-pill-id">{{ n.id }}</span>
+            </button>
           </li>
         </ul>
         <span v-else class="dep-none text-base-content/50">—</span>
@@ -171,38 +175,71 @@ defineExpose({ refresh: fetchSummary });
   margin: 0;
   padding: 0;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 0.4rem;
 }
 
-.dep-item {
-  display: flex;
+.dep-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.55rem;
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
-  min-width: 0;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
-.dep-item .badge {
+.dep-pill:hover {
+  background: color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  border-color: color-mix(in oklab, var(--color-base-content) 15%, transparent);
+}
+
+.dep-pill.is-requirement {
+  background: color-mix(in oklab, var(--color-info, #3b82f6) 12%, transparent);
+}
+
+.dep-pill.is-requirement:hover {
+  background: color-mix(in oklab, var(--color-info, #3b82f6) 20%, transparent);
+  border-color: color-mix(in oklab, var(--color-info, #3b82f6) 35%, transparent);
+}
+
+.dep-pill.is-defect {
+  background: color-mix(in oklab, var(--color-warning, #f59e0b) 14%, transparent);
+}
+
+.dep-pill.is-defect:hover {
+  background: color-mix(in oklab, var(--color-warning, #f59e0b) 22%, transparent);
+  border-color: color-mix(in oklab, var(--color-warning, #f59e0b) 35%, transparent);
+}
+
+.dep-pill-kind {
+  font-weight: 600;
+  font-size: 0.72rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  color: var(--color-base-content);
   flex-shrink: 0;
 }
 
-.dep-item-id {
+.dep-pill.is-requirement .dep-pill-kind {
+  background: color-mix(in oklab, var(--color-info, #3b82f6) 30%, transparent);
+  color: var(--color-info-content, #fff);
+}
+
+.dep-pill.is-defect .dep-pill-kind {
+  background: color-mix(in oklab, var(--color-warning, #f59e0b) 35%, transparent);
+  color: var(--color-warning-content, #000);
+}
+
+.dep-pill-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.75rem;
-  flex-shrink: 0;
-}
-
-.dep-item-desc {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
-  color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+  font-size: 0.72rem;
+  color: color-mix(in oklab, var(--color-base-content) 75%, transparent);
 }
 
 .dep-none {
