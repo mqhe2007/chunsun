@@ -52,6 +52,28 @@ chunsun fix <缺陷ID>                                             # 派生唯�
 `put` 会先读已有 snapshot，再按顶层 key 合并后写入；缺省 Memory 时从空对象开始。
 `get` 在尚无 Memory 时友好提示并退出 0（`--json` 返回 `{"exists":false}`）。
 
+## chunsun dependency（Agent 依赖感知与调度）
+
+```bash
+chunsun dependency list                                          # 列出项目内全部依赖边（source blocks target）
+chunsun dependency schedule                                      # 全项目调度分析：拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合
+chunsun dependency blocked <requirement|defect> <ID>             # 单节点阻塞状态：是否被阻塞 + 阻塞原因（未完成前置）+ 是否可执行
+chunsun dependency unlock <requirement|defect> <ID>              # 解锁分析：模拟该节点完成后，其直接下游中哪些解锁、哪些仍被阻塞
+```
+
+依赖语义（与后端 DAG 一致）：
+
+- 边方向 `source blocks target`（source 不完成，target 无法开始）。
+- **完成判定**：requirement `completed`；defect `resolved` / `closed`。
+- **被阻塞**：节点存在任一未完成的直接前置（Blocked By 中存在非完成节点）→ 不进入执行队列。
+- **可执行**：所有直接前置均已完成。
+
+Agent 调度用法（见 skill「依赖调度」节）：
+
+1. **执行前**：`chunsun dependency blocked requirement <ID>`，被阻塞则记录阻塞原因到工作记忆并停，不执行。
+2. **调度中**：`chunsun dependency schedule` 看拓扑分层（每层可并行、层间串行）、关键路径，优先推进瓶颈。
+3. **完成后**：`chunsun dependency unlock requirement <ID>` 检查下游解锁，将解锁结果写入工作记忆。
+
 ## chunsun requirement / defect / env（基础管理）
 
 ```bash

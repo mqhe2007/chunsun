@@ -718,7 +718,7 @@ mod tests {
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-08-27-knowledge-load-strategy",
+            "2026-09-02-dependency-scheduling",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }
