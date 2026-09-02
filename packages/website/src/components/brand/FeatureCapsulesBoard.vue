@@ -8,10 +8,13 @@ import FeatureCapsule from "@/components/brand/FeatureCapsule.vue";
 import type { LucideIcon } from "@lucide/vue";
 import {
   Bell,
+  BellRing,
+  BookOpen,
   Bug,
   Check,
   Compass,
   Database,
+  GitBranch,
   Hash,
   Key,
   Link,
@@ -26,6 +29,7 @@ import {
   Shield,
   Sparkles,
   SquareCheck,
+  Workflow,
   Zap,
 } from "@lucide/vue";
 
@@ -163,6 +167,30 @@ const features: FeaturePoint[] = [
     title: "可再迭代",
     line: "completed 后再 /chunsun，开新 Run 继续生长。",
     icon: Sparkles,
+  },
+  {
+    id: "deps",
+    title: "依赖关系",
+    line: "需求间谁卡谁，DAG 自动推导，阻塞链路一眼看清。",
+    icon: GitBranch,
+  },
+  {
+    id: "dep-aware",
+    title: "依赖感知调度",
+    line: "Agent 认得上下游，前置没完成不瞎跑，解锁自动接上。",
+    icon: Workflow,
+  },
+  {
+    id: "knowledge-load",
+    title: "知识按需加载",
+    line: "知识要用才进 prompt，省 token 不淹上下文，eager/lazy 自选。",
+    icon: BookOpen,
+  },
+  {
+    id: "notify-pref",
+    title: "通知偏好",
+    line: "交付节点不再石沉大海，收什么自己定，该响的才响。",
+    icon: BellRing,
   },
 ];
 
