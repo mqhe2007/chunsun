@@ -10,6 +10,14 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let repo = manifest.parent().and_then(|p| p.parent()).unwrap();
 
+    // 统一版本号：单一来源为根 package.json（与 CLI build.rs 保持一致）
+    let app_version = read_root_version(&repo);
+    println!("cargo:rustc-env=CHUNSUN_VERSION={app_version}");
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo.join("package.json").display()
+    );
+
     let web_out = out.join("web");
     let cli_scripts_out = out.join("cli-scripts");
     let cli_dist_out = out.join("cli-dist");
@@ -86,4 +94,22 @@ fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// 从根 package.json 读取版本号（最小解析："version": "x.y.z"）。
+/// 与 packages/cli/build.rs 中的同名函数保持一致。
+fn read_root_version(repo_root: &Path) -> String {
+    let pkg = fs::read_to_string(repo_root.join("package.json")).unwrap_or_default();
+    for line in pkg.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("\"version\"") {
+            if let Some(start) = rest.find('"') {
+                let after = &rest[start + 1..];
+                if let Some(end) = after.find('"') {
+                    return after[..end].to_string();
+                }
+            }
+        }
+    }
+    "0.0.0".to_string()
 }

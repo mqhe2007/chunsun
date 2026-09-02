@@ -222,6 +222,40 @@ pub fn cleanup_stale_update() {
     }
 }
 
+/// 解析标准 semver 版本号（x.y.z，可带前导 v）。
+fn parse_semver(v: &str) -> Option<(u64, u64, u64)> {
+    let v = v.trim().trim_start_matches('v');
+    let mut parts = v.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+/// 判断是否需要更新：latest 比 current 新时返回 true。
+/// 两者均为标准 semver 时按元组比较；任一无法解析时回退为"不同即更新"（兼容旧行为）。
+fn should_update(latest: &str, current: &str) -> bool {
+    match (parse_semver(latest), parse_semver(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => latest != current,
+    }
+}
+
+/// 安装后回读新二进制的真实版本号（运行 --version 并解析），
+/// 避免直接回显 /health 的后端版本号而造成误导。
+fn read_binary_version(path: &Path) -> Option<String> {
+    let output = Command::new(path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // 期望输出形如 "chunsun 0.4.8"，取最后一个空白分隔的 token
+    stdout.split_whitespace().last().map(|s| s.to_string())
+}
+
 pub fn run(args: UpdateArgs) -> CmdResult {
     let api_url = resolve_api_base_url();
     let base_url = get_download_base_url()?;
@@ -252,6 +286,31 @@ pub fn run(args: UpdateArgs) -> CmdResult {
         println!("[chunsun] 已是最新版本 v{current_version}，无需更新");
         let cwd = std::env::current_dir()?;
         // 即使 CLI 二进制未变，也向实例核对模板版本（实例可能已发版新模板）。
+        match try_refresh_templates_from_instance(&cwd) {
+            Ok(Some(result)) => report_refresh(&result),
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!(
+                    "[chunsun] 技能模板刷新失败：{err}，可手动运行 `chunsun init`。"
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if !should_update(&latest.version, current_version) {
+        if args.check {
+            println!(
+                "[chunsun] 实例版本 v{} 不高于本地 CLI v{current_version}，无需更新",
+                latest.version
+            );
+            return Ok(());
+        }
+        println!(
+            "[chunsun] 实例版本 v{} 落后于本地 CLI v{current_version}，跳过自动更新（请先升级服务端实例）",
+            latest.version
+        );
+        let cwd = std::env::current_dir()?;
         match try_refresh_templates_from_instance(&cwd) {
             Ok(Some(result)) => report_refresh(&result),
             Ok(None) => {}
@@ -305,9 +364,9 @@ pub fn run(args: UpdateArgs) -> CmdResult {
         return Err(CmdError::exit_only(1));
     }
 
+    let real_new_version = read_binary_version(&exec_path).unwrap_or_else(|| latest.version.clone());
     println!(
-        "[chunsun] 更新成功：v{current_version} → v{}",
-        latest.version
+        "[chunsun] 更新成功：v{current_version} → v{real_new_version}"
     );
 
     let refresh_ok = Command::new(&exec_path)
@@ -365,5 +424,42 @@ mod tests {
     #[test]
     fn derive_cli_url_rejects_unknown_shape() {
         assert!(derive_cli_url_from_api("https://example.com/v1").is_err());
+    }
+
+    #[test]
+    fn parse_semver_handles_leading_v_and_plain() {
+        assert_eq!(parse_semver("v0.4.8"), Some((0, 4, 8)));
+        assert_eq!(parse_semver("0.4.8"), Some((0, 4, 8)));
+        assert_eq!(parse_semver("  v1.2.3  "), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn parse_semver_rejects_bad_input() {
+        assert_eq!(parse_semver(""), None);
+        assert_eq!(parse_semver("0.4"), None);
+        assert_eq!(parse_semver("0.4.8.1"), None);
+        assert_eq!(parse_semver("abc"), None);
+        assert_eq!(parse_semver("v0.4.x"), None);
+    }
+
+    #[test]
+    fn should_update_compares_by_semver() {
+        // 更高 → 更新
+        assert!(should_update("0.4.9", "0.4.8"));
+        assert!(should_update("0.5.0", "0.4.9"));
+        assert!(should_update("1.0.0", "0.9.9"));
+        // 更低 → 不更新（阻止静默降级）
+        assert!(!should_update("0.4.7", "0.4.8"));
+        assert!(!should_update("0.3.9", "0.4.0"));
+        // 相等 → 不更新（run() 中已提前处理，这里也应返回 false）
+        assert!(!should_update("0.4.8", "0.4.8"));
+    }
+
+    #[test]
+    fn should_update_fallback_when_unparseable() {
+        // 任一无法解析时回退为"不同即更新"（兼容旧行为）
+        assert!(should_update("custom-build", "0.4.8"));
+        assert!(should_update("0.4.8", "custom-build"));
+        assert!(!should_update("custom-build", "custom-build"));
     }
 }

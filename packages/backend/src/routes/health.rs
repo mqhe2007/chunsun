@@ -11,7 +11,7 @@ use crate::state::AppState;
 pub async fn health() -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": env!("CHUNSUN_VERSION"),
         "uptime": uptime_secs_f64(),
     }))
 }

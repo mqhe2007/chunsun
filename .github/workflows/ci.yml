@@ -43,3 +43,21 @@ jobs:
         with:
           workspaces: packages/cli
       - run: cargo test --manifest-path packages/cli/Cargo.toml
+
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验版本号一致性（单一来源：根 package.json）
+        run: |
+          PKG_VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
+          BACKEND_VERSION=$(grep -m1 '^version' packages/backend/Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
+          CLI_VERSION=$(grep -m1 '^version' packages/cli/Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
+          echo "package.json:       $PKG_VERSION"
+          echo "backend Cargo.toml: $BACKEND_VERSION"
+          echo "cli Cargo.toml:     $CLI_VERSION"
+          if [ "$PKG_VERSION" != "$BACKEND_VERSION" ] || [ "$PKG_VERSION" != "$CLI_VERSION" ]; then
+            echo "::error::版本号不一致：package.json=$PKG_VERSION, backend=$BACKEND_VERSION, cli=$CLI_VERSION（应以根 package.json 为唯一来源）"
+            exit 1
+          fi
+          echo "版本号一致：$PKG_VERSION"
