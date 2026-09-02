@@ -40,6 +40,9 @@ else
         usage
         exit 0
         ;;
+      --)
+        # pnpm/npm run 传递参数时的分隔符，忽略
+        ;;
       all)
         ALIASES=("${ALL_PLATFORM_ALIASES[@]}")
         break
