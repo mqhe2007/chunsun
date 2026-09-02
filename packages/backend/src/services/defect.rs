@@ -14,11 +14,13 @@
 use sqlx::PgPool;
 
 use crate::api::AppError;
+use crate::core::dependency_graph::NodeKind;
 use crate::repos::defect::{
     self, CreateDefectInput, DefectListFilters, DefectRow, UpdateDefectPatch,
 };
 use crate::repos::requirement::{self, CreateRequirementInput, RequirementRow};
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
+use crate::services::dependency::{self as dep_service, BlockedByRef};
 use crate::services::notification::{defect_recipient, notify, NotifyRequest};
 use crate::services::project_access::visible_project_id;
 
@@ -105,6 +107,9 @@ pub struct CreateDefectArgs<'a> {
     pub status: Option<&'a str>,
     pub severity: Option<&'a str>,
     pub requirement_id: Option<&'a str>,
+    /// 创建时携带的"被谁阻塞"上游依赖引用列表。与 requirement 的语义保持一致：
+    /// 非必选，为空则不写依赖边；校验与建边在同一事务内，任一节点不存在或重复，整批回滚。
+    pub blocked_by: &'a [BlockedByRef<'a>],
 }
 
 /// POST `/projects/:projectId/defects` → 201
@@ -118,8 +123,12 @@ pub async fn create_defect(
 ) -> Result<DefectRow, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
 
+    dep_service::assert_blocked_by_refs_exist(pool, &project_id, args.blocked_by).await?;
+
+    let mut tx = pool.begin().await?;
+
     let row = defect::create_defect(
-        pool,
+        &mut *tx,
         CreateDefectInput {
             project_id: &project_id,
             description: args.description,
@@ -130,6 +139,17 @@ pub async fn create_defect(
         },
     )
     .await?;
+
+    dep_service::link_blocked_by_in_tx(
+        &mut *tx,
+        &project_id,
+        NodeKind::Defect,
+        &row.id,
+        args.blocked_by,
+    )
+    .await?;
+
+    tx.commit().await?;
 
     let desc = defect_display_label(&row);
     log_activity(

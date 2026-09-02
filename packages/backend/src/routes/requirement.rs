@@ -28,8 +28,10 @@ use crate::api::{ok, ok_with_meta, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
 use crate::core::query_filters::parse_comma_separated_enum;
 use crate::core::serde_ext::double_option;
+use crate::routes::body_helpers::BlockedByRefBody;
 use crate::routes::dto::requirement_dto;
 use crate::routes::validate::{nullable_optional_string, optional_enum, optional_string, required_string};
+use crate::services::dependency::BlockedByRef;
 use crate::services::requirement::{
     self as requirement_service, CreateRequirementArgs, ListRequirementsQuery,
     UpdateRequirementArgs,
@@ -103,6 +105,10 @@ pub struct CreateRequirementBody {
     pub coverage: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub owner_id: Option<Option<String>>,
+    /// 创建时携带的"被谁阻塞"上游依赖。可选；缺省与 `null` 均合法（视为空列表）。
+    /// 每项 `{ kind: "requirement" | "defect", id: string }`；kind 非法或节点不存在返回 422 / 404。
+    #[serde(default, deserialize_with = "double_option")]
+    pub blocked_by: Option<Option<Vec<BlockedByRefBody>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +181,22 @@ async fn create(
     let coverage = optional_enum("coverage", &body.coverage, COVERAGES)?;
     let owner_id = nullable_optional_string("ownerId", &body.owner_id, NO_MIN, NO_MAX)?;
 
+    let blocked_by_raw = body.blocked_by.flatten();
+    let blocked_by: Vec<BlockedByRef<'_>> = blocked_by_raw
+        .as_deref()
+        .map(|arr| {
+            arr.iter()
+                .map(|r| -> Result<BlockedByRef<'_>, AppError> {
+                    let kind = required_string("blockedBy[].kind", &r.kind, 1, NO_MAX)?;
+                    let id = required_string("blockedBy[].id", &r.id, 1, NO_MAX)?;
+                    Ok(BlockedByRef { kind, id })
+                })
+                .collect::<Result<Vec<_>, AppError>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let blocked_by_slice: &[BlockedByRef<'_>] = &blocked_by;
+
     let row = requirement_service::create_requirement(
         &state.pool(),
         &project_id,
@@ -187,6 +209,7 @@ async fn create(
             client_notes,
             coverage,
             owner_id,
+            blocked_by: blocked_by_slice,
         },
     )
     .await?;

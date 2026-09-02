@@ -15,6 +15,7 @@
 use sqlx::PgPool;
 
 use crate::api::AppError;
+use crate::core::dependency_graph::NodeKind;
 use crate::repos::project_member;
 use crate::repos::repository as repository_repo;
 use crate::repos::requirement::{
@@ -22,6 +23,7 @@ use crate::repos::requirement::{
     UpdateRequirementPatch,
 };
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
+use crate::services::dependency::{self as dep_service, BlockedByRef};
 use crate::services::notification::{notify, NotifyRequest};
 use crate::services::project_access::visible_project_id;
 
@@ -100,6 +102,9 @@ pub struct CreateRequirementArgs<'a> {
     pub coverage: Option<&'a str>,
     /// `Option<Option<…>>`：缺省与显式 null 在旧实现里都摊平成 null（`body.ownerId ?? null`）。
     pub owner_id: Option<Option<&'a str>>,
+    /// 创建时携带的"被谁阻塞"上游依赖引用列表（每个 ref = 上游节点）。
+    /// 非必选，为空则不写任何依赖边。校验与建边在同一事务内：任一节点不存在或重复，整批回滚。
+    pub blocked_by: &'a [BlockedByRef<'a>],
 }
 
 /// POST `/projects/:projectId/requirements` → 201
@@ -133,8 +138,15 @@ pub async fn create_requirement(
         None => None,
     };
 
+    // 校验 blocked_by 引用：每个 ref.kind 合法 + 对应节点真实存在。
+    // 不做循环检测——新建节点 id 未存在于图里，不可能成环。
+    dep_service::assert_blocked_by_refs_exist(pool, &project_id, args.blocked_by).await?;
+
+    // 整批写入：需求行 + blocked_by 边集。在同一事务内，任一失败整体回滚。
+    let mut tx = pool.begin().await?;
+
     let row = requirement::create_requirement(
-        pool,
+        &mut *tx,
         CreateRequirementInput {
             project_id: &project_id,
             repository_id: resolved_repository_id.as_deref(),
@@ -149,6 +161,17 @@ pub async fn create_requirement(
         },
     )
     .await?;
+
+    dep_service::link_blocked_by_in_tx(
+        &mut *tx,
+        &project_id,
+        NodeKind::Requirement,
+        &row.id,
+        args.blocked_by,
+    )
+    .await?;
+
+    tx.commit().await?;
 
     let desc = format!("创建需求 {}", row.id);
     log_activity(

@@ -81,6 +81,84 @@ async fn build_graph(pool: &PgPool, project_id: &str) -> Result<DependencyGraph,
     Ok(DependencyGraph::from_edges(edges))
 }
 
+/// 新建需求/缺陷时携带的"被谁阻塞"引用列表（每条引用 = 一个上游节点）。
+#[derive(Debug, Clone, Copy)]
+pub struct BlockedByRef<'a> {
+    pub kind: &'a str,
+    pub id: &'a str,
+}
+
+/// 在**事务内**为新建节点 `target_id`（kind 已知）批量建立依赖边：
+/// 对每个 `ref` 插入 `source = ref.kind/ref.id` → `target = (target_kind, target_id)`。
+///
+/// 调用方前置条件：
+/// 1. 已对项目做过 `visible_project_id` 校验；
+/// 2. 已对每个 `ref.kind` 校验是合法 NodeKind 且节点存在；
+/// 3. 不要做循环检测——新建节点 id 不在图里，没环可成。
+///
+/// 重复引用由数据库唯一约束 `(source_type, source_id, target_type, target_id)` 兜底，
+/// 命中时整个事务回滚（由调用方控制 tx 生命周期）。
+///
+/// `executor` 是 `&mut PgConnection`（sqlx `Transaction` 解引用后的连接）。
+/// 在同一次事务里多次 `create_dependency` 复用同一个 `&mut PgConnection`，
+/// 复用 `Executor` 的 `&mut PgConnection` 实现（`PgConnection` 本身不实现 `Executor`）。
+pub async fn link_blocked_by_in_tx<'c>(
+    executor: &'c mut sqlx::PgConnection,
+    project_id: &str,
+    target_kind: NodeKind,
+    target_id: &str,
+    refs: &[BlockedByRef<'_>],
+) -> Result<Vec<DependencyRow>, AppError> {
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        let row = dependency::create_dependency(
+            &mut *executor,
+            CreateDependencyInput {
+                project_id,
+                source_type: r.kind,
+                source_id: r.id,
+                target_type: target_kind.as_str(),
+                target_id,
+            },
+        )
+        .await?;
+        out.push(row);
+    }
+    Ok(out)
+}
+
+/// 创建节点（需求/缺陷）携带的 `blockedBy` 引用前置校验：
+/// - 每个 `ref.kind` 必须是合法 NodeKind（`requirement` / `defect`）；
+/// - 对应节点必须真实存在于该项目；
+/// - 重复 `(kind, id)` 视作同一上游，自动去重（不抛错）。
+///
+/// 任一引用节点不存在返回 404 `DEPENDENCY_TARGET_NOT_FOUND`。
+pub async fn assert_blocked_by_refs_exist(
+    pool: &PgPool,
+    project_id: &str,
+    refs: &[BlockedByRef<'_>],
+) -> Result<(), AppError> {
+    // 去重 + 过滤空 id
+    let mut seen = std::collections::HashSet::new();
+    let mut uniq: Vec<BlockedByRef<'_>> = Vec::new();
+    for r in refs {
+        if r.id.is_empty() {
+            continue;
+        }
+        if seen.insert((r.kind.to_string(), r.id.to_string())) {
+            uniq.push(*r);
+        }
+    }
+
+    for r in &uniq {
+        let kind = NodeKind::parse(r.kind).ok_or(DependencyFailure::TargetNotFound)?;
+        if !node_exists(pool, project_id, kind, r.id).await? {
+            return Err(DependencyFailure::TargetNotFound.into());
+        }
+    }
+    Ok(())
+}
+
 pub struct AddDependencyArgs<'a> {
     pub source_type: &'a str,
     pub source_id: &'a str,

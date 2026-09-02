@@ -21,6 +21,7 @@ import {
 import CopyableValue from "@/components/common/CopyableValue.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import DependencySection from "@/components/projects/DependencySection.vue";
+import NodePicker, { type PickedNode } from "@/components/projects/NodePicker.vue";
 
 type DefectRow = {
   id: string;
@@ -59,6 +60,7 @@ const form = ref({
   description: "",
   status: "open",
   severity: "minor",
+  blockedBy: [] as PickedNode[],
 });
 
 const projectId = () => (route.params as Record<string, string>).id;
@@ -153,6 +155,7 @@ function openCreate() {
     description: "",
     status: "open",
     severity: "minor",
+    blockedBy: [],
   };
   showForm.value = true;
 }
@@ -168,6 +171,7 @@ function openEdit(row: DefectRow) {
     description: row.description ?? "",
     status: row.status,
     severity: row.severity,
+    blockedBy: [],
   };
   showForm.value = true;
 }
@@ -183,6 +187,7 @@ async function saveDefect() {
     description: form.value.description.trim() || undefined,
     status: form.value.status,
     severity: form.value.severity,
+    blockedBy: form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id })),
   };
 
   try {
@@ -384,6 +389,13 @@ onMounted(async () => {
         </AppField>
         <AppField label="状态">
           <AppSelect v-model="form.status" :options="statusOptions" />
+        </AppField>
+        <AppField label="上级依赖（被谁阻塞）" class="full">
+          <NodePicker
+            v-model="form.blockedBy"
+            :project-id="projectId()"
+            placeholder="选择上游需求/缺陷（可选）"
+          />
         </AppField>
       </div>
       <template #footer>
