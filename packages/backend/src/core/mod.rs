@@ -2,6 +2,7 @@
 
 pub mod activity_heatmap;
 pub mod datetime;
+pub mod dependency_graph;
 pub mod env_var_crypto;
 pub mod ids;
 pub mod js_number;

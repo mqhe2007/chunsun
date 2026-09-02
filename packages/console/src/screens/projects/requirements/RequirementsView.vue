@@ -58,6 +58,7 @@ const loading = ref(false);
 const saving = ref(false);
 const requirements = ref<Requirement[]>([]);
 const members = ref<ProjectMemberBrief[]>([]);
+const blockedRequirementIds = ref<Set<string>>(new Set());
 const idFilter = ref("");
 const statusFilter = ref<string[]>([]);
 const ownerFilter = ref("");
@@ -152,6 +153,31 @@ async function fetchMembers() {
     if (data.success) members.value = data.data;
   } catch {
     // 全局拦截器已提示错误
+  }
+}
+
+type DependencyEdge = {
+  sourceType: "requirement" | "defect";
+  sourceId: string;
+  targetType: "requirement" | "defect";
+  targetId: string;
+};
+
+async function fetchBlockedIds() {
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data: DependencyEdge[];
+    }>(`/projects/${projectId()}/dependencies`);
+    if (data.success) {
+      const set = new Set<string>();
+      for (const e of data.data) {
+        if (e.targetType === "requirement") set.add(e.targetId);
+      }
+      blockedRequirementIds.value = set;
+    }
+  } catch {
+    // 忽略：依赖端点失败不阻断列表展示
   }
 }
 
@@ -259,7 +285,7 @@ watch([idFilter, statusFilter, ownerFilter], () => {
 onMounted(async () => {
   redirectLegacyQuery();
   viewMode.value = readViewMode(projectId());
-  const jobs: Promise<unknown>[] = [fetchMembers()];
+  const jobs: Promise<unknown>[] = [fetchMembers(), fetchBlockedIds()];
   if (viewMode.value === "list") jobs.unshift(fetchRequirements());
   await Promise.all(jobs);
 });
@@ -338,6 +364,7 @@ onMounted(async () => {
       :id-filter="idFilter"
       :owner-filter="ownerFilter"
       :reload-token="boardReloadToken"
+      :blocked-ids="blockedRequirementIds"
       @open-detail="openDetail"
       @edit="openEdit"
       @delete="confirmDelete"
@@ -388,6 +415,13 @@ onMounted(async () => {
             </span>
             <span v-if="(row as Requirement).origin === 'defect'" class="badge badge-warning">
               来自缺陷
+            </span>
+            <span
+              v-if="blockedRequirementIds.has((row as Requirement).id)"
+              class="badge badge-error"
+              title="被其他节点阻塞"
+            >
+              被阻塞
             </span>
           </div>
         </template>

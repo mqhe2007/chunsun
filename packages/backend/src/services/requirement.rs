@@ -300,5 +300,13 @@ pub async fn delete_requirement(
     let row = requirement::delete_requirement_by_id(pool, requirement_id, &project_id)
         .await?
         .ok_or::<AppError>(RequirementFailure::RequirementNotFound.into())?;
+    // 级联清理该需求的依赖边（出边 + 入边），避免留下悬空引用
+    crate::repos::dependency::delete_dependencies_for_node(
+        pool,
+        &project_id,
+        "requirement",
+        &row.id,
+    )
+    .await?;
     Ok(row.id)
 }

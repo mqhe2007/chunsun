@@ -43,6 +43,7 @@ const props = defineProps<{
   idFilter: string;
   ownerFilter: string;
   reloadToken: number;
+  blockedIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -246,6 +247,13 @@ onUnmounted(() => {
               />
               <span v-if="row.origin === 'defect'" class="badge badge-warning badge-sm shrink-0">
                 来自缺陷
+              </span>
+              <span
+                v-if="props.blockedIds?.has(row.id)"
+                class="badge badge-error badge-sm shrink-0"
+                title="被其他节点阻塞"
+              >
+                被阻塞
               </span>
             </div>
             <p class="req-card-desc" :title="row.description">{{ row.description }}</p>

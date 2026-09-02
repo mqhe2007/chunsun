@@ -131,6 +131,7 @@ fn build_api(state: AppState) -> Router<AppState> {
         .merge(routes::repository::router(state.clone()))
         .merge(routes::requirement::router(state.clone()))
         .merge(routes::defect::router(state.clone()))
+        .merge(routes::dependency::router(state.clone()))
         .merge(routes::activity::router(state.clone()))
         .merge(routes::project_knowledge::router(state.clone()))
         .merge(routes::system_setting::router(state.clone()))
