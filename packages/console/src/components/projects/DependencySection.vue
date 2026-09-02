@@ -182,6 +182,11 @@ defineExpose({ refresh: fetchSummary });
   padding: 0.45rem 0.55rem;
   border-radius: 8px;
   background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+  min-width: 0;
+}
+
+.dep-item .badge {
+  flex-shrink: 0;
 }
 
 .dep-item-id {
@@ -191,6 +196,8 @@ defineExpose({ refresh: fetchSummary });
 }
 
 .dep-item-desc {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
