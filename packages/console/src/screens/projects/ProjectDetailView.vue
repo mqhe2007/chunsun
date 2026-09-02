@@ -301,13 +301,23 @@ async function onProjectUpdated() {
 </template>
 
 <style scoped>
-.project-detail:has(.req-page--board) {
+/* 项目内容区默认撑满剩余高度，使依赖图等需要全屏的子页面获得确定高度 */
+.dashboard-outlet {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+/* 需求看板 / 依赖图等需要撑满视口的子页面：打通从 project-detail 到子页面的高度链 */
+.project-detail:has(.req-page--board),
+.project-detail:has(.dep-graph) {
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: hidden;
 }
 
-.project-detail:has(.req-page--board) .dashboard-outlet {
+.project-detail:has(.req-page--board) .dashboard-outlet,
+.project-detail:has(.dep-graph) .dashboard-outlet {
   display: flex;
   flex: 1 1 auto;
   min-block-size: 0;
@@ -315,7 +325,8 @@ async function onProjectUpdated() {
   overflow: hidden;
 }
 
-.project-detail:has(.req-page--board) .dashboard-outlet > * {
+.project-detail:has(.req-page--board) .dashboard-outlet > *,
+.project-detail:has(.dep-graph) .dashboard-outlet > * {
   display: flex;
   flex: 1 1 auto;
   min-block-size: 0;
