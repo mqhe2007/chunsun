@@ -142,10 +142,13 @@ pub struct CreateDefectInput<'a> {
 /// 旧实现带 `include: defectListInclude`，所以**传了合法 requirementId 时响应里的
 /// `requirement` 是关联对象而不是 null**。这里用 CTE 一次往返完成「插入 + 关联查询」，
 /// 避免退化成恒 null。
-pub async fn create_defect(
-    pool: &PgPool,
+pub async fn create_defect<'e, E>(
+    executor: E,
     input: CreateDefectInput<'_>,
-) -> Result<DefectRow, AppError> {
+) -> Result<DefectRow, AppError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let id = nanoid(12);
     let sql = format!(
         "WITH ins AS ( \
@@ -167,7 +170,7 @@ pub async fn create_defect(
         .bind(input.severity.unwrap_or("minor"))
         .bind(input.requirement_id)
         .bind(input.created_by)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
     Ok(row.into_row())
 }

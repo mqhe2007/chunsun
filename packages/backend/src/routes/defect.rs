@@ -32,15 +32,17 @@ use crate::auth::CurrentUser;
 use crate::core::datetime::to_value as dt_value;
 use crate::core::query_filters::parse_comma_separated_enum;
 use crate::core::serde_ext::double_option;
+use crate::routes::body_helpers::BlockedByRefBody;
 use crate::routes::dto::defect_dto;
 use crate::routes::validate::{
-    nullable_optional_string, optional_enum, optional_string,
+    nullable_optional_string, optional_enum, optional_string, required_string,
 };
 use crate::services::activity_log::{log_activity, ActivityAction, LogActivityOptions};
 use crate::services::defect::{
     self as defect_service, ConvertDefectResult, CreateDefectArgs, ListDefectsQuery,
     UpdateDefectArgs,
 };
+use crate::services::dependency::BlockedByRef;
 use crate::state::AppState;
 
 /// 列表筛选与 PATCH 共用的状态白名单。
@@ -74,6 +76,10 @@ pub struct CreateDefectBody {
     pub severity: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub requirement_id: Option<Option<String>>,
+    /// 创建时携带的"被谁阻塞"上游依赖（语义与创建需求一致）。
+    /// 可选；缺省与 `null` 视为空列表。`kind` 非法或节点不存在返回 422 / 404。
+    #[serde(default, deserialize_with = "double_option")]
+    pub blocked_by: Option<Option<Vec<BlockedByRefBody>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +136,22 @@ async fn create(
     let severity = optional_enum("severity", &body.severity, SEVERITIES)?;
     let requirement_id = optional_string("requirementId", &body.requirement_id, NO_MIN, NO_MAX)?;
 
+    let blocked_by_raw = body.blocked_by.flatten();
+    let blocked_by: Vec<BlockedByRef<'_>> = blocked_by_raw
+        .as_deref()
+        .map(|arr| {
+            arr.iter()
+                .map(|r| -> Result<BlockedByRef<'_>, AppError> {
+                    let kind = required_string("blockedBy[].kind", &r.kind, 1, NO_MAX)?;
+                    let id = required_string("blockedBy[].id", &r.id, 1, NO_MAX)?;
+                    Ok(BlockedByRef { kind, id })
+                })
+                .collect::<Result<Vec<_>, AppError>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let blocked_by_slice: &[BlockedByRef<'_>] = &blocked_by;
+
     let row = defect_service::create_defect(
         &state.pool(),
         &project_id,
@@ -140,6 +162,7 @@ async fn create(
             status,
             severity,
             requirement_id,
+            blocked_by: blocked_by_slice,
         },
         &state.config().public_origin,
     )

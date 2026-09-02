@@ -18,6 +18,7 @@ import { api } from "@/utils/api";
 import { REQUIREMENT_STATUS_LABEL } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import NodePicker, { type PickedNode } from "@/components/projects/NodePicker.vue";
 import RequirementsBoard from "./RequirementsBoard.vue";
 import {
   readViewMode,
@@ -70,6 +71,7 @@ const boardReloadToken = ref(0);
 const form = ref({
   description: "",
   ownerId: "" as string,
+  blockedBy: [] as PickedNode[],
 });
 
 const projectId = () => (route.params as Record<string, string>).id;
@@ -182,7 +184,7 @@ async function fetchBlockedIds() {
 }
 
 function resetForm() {
-  form.value = { description: "", ownerId: "" };
+  form.value = { description: "", ownerId: "", blockedBy: [] };
 }
 
 function openCreate() {
@@ -197,6 +199,7 @@ function openEdit(row: Requirement) {
   form.value = {
     description: row.description,
     ownerId: row.ownerId ?? "",
+    blockedBy: [],
   };
   showForm.value = true;
 }
@@ -210,6 +213,7 @@ async function saveRequirement() {
   const payload = {
     description: form.value.description.trim(),
     ownerId: form.value.ownerId || null,
+    blockedBy: form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id })),
   };
 
   saving.value = true;
@@ -466,6 +470,13 @@ onMounted(async () => {
         </AppField>
         <AppField label="描述">
           <AutoHeightTextarea v-model="form.description" placeholder="需求描述" />
+        </AppField>
+        <AppField label="上级依赖（被谁阻塞）">
+          <NodePicker
+            v-model="form.blockedBy"
+            :project-id="projectId()"
+            placeholder="选择上游需求/缺陷（可选）"
+          />
         </AppField>
       </div>
       <template #footer>

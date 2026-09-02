@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod auth;
+pub mod body_helpers;
 pub mod defect;
 pub mod dependency;
 pub mod dto;
