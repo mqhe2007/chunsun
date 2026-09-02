@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod auth;
 pub mod defect;
+pub mod dependency;
 pub mod dto;
 pub mod harness;
 pub mod harness_template;

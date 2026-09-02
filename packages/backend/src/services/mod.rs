@@ -2,6 +2,7 @@
 
 pub mod activity_log;
 pub mod defect;
+pub mod dependency;
 pub mod auth;
 pub mod email;
 pub mod instance_config;

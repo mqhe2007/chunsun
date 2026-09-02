@@ -275,6 +275,15 @@ pub async fn delete_defect(
         .await?
         .ok_or::<AppError>(DefectFailure::DefectNotFound.into())?;
 
+    // 级联清理该缺陷的依赖边（出边 + 入边），避免留下悬空引用
+    crate::repos::dependency::delete_dependencies_for_node(
+        pool,
+        &project_id,
+        "defect",
+        &row.id,
+    )
+    .await?;
+
     log_activity(
         pool,
         &project_id,

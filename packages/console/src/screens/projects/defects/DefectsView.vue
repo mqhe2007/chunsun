@@ -20,6 +20,7 @@ import {
 } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import DependencySection from "@/components/projects/DependencySection.vue";
 
 type DefectRow = {
   id: string;
@@ -44,6 +45,7 @@ const toast = useToast();
 const loading = ref(false);
 const saving = ref(false);
 const defects = ref<DefectRow[]>([]);
+const blockedDefectIds = ref<Set<string>>(new Set());
 
 const statusFilter = ref<string[]>([]);
 const severityFilter = ref("");
@@ -119,6 +121,31 @@ watch(
     filterTimer = setTimeout(fetchDefects, 250);
   },
 );
+
+type DependencyEdge = {
+  sourceType: "requirement" | "defect";
+  sourceId: string;
+  targetType: "requirement" | "defect";
+  targetId: string;
+};
+
+async function fetchBlockedIds() {
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data: DependencyEdge[];
+    }>(`/projects/${projectId()}/dependencies`);
+    if (data.success) {
+      const set = new Set<string>();
+      for (const e of data.data) {
+        if (e.targetType === "defect") set.add(e.targetId);
+      }
+      blockedDefectIds.value = set;
+    }
+  } catch {
+    // 忽略：依赖端点失败不阻断列表展示
+  }
+}
 
 function openCreate() {
   editing.value = null;
@@ -223,7 +250,7 @@ async function confirmConvert(row: DefectRow) {
 }
 
 onMounted(async () => {
-  await fetchDefects();
+  await Promise.all([fetchDefects(), fetchBlockedIds()]);
 });
 </script>
 
@@ -293,11 +320,20 @@ onMounted(async () => {
           </span>
         </template>
       </AppColumn>
-      <AppColumn header="状态" width="100px">
+      <AppColumn header="状态" width="140px">
         <template #default="{ row }">
-          <span class="badge" :class="statusBadgeClass((row as DefectRow).status)">
-            {{ DEFECT_STATUS_LABEL[(row as DefectRow).status] ?? (row as DefectRow).status }}
-          </span>
+          <div class="status-cell">
+            <span class="badge" :class="statusBadgeClass((row as DefectRow).status)">
+              {{ DEFECT_STATUS_LABEL[(row as DefectRow).status] ?? (row as DefectRow).status }}
+            </span>
+            <span
+              v-if="blockedDefectIds.has((row as DefectRow).id)"
+              class="badge badge-error"
+              title="被其他节点阻塞"
+            >
+              被阻塞
+            </span>
+          </div>
         </template>
       </AppColumn>
       <AppColumn header="更新" width="110px">
@@ -409,6 +445,13 @@ onMounted(async () => {
           </p>
         </div>
       </div>
+      <DependencySection
+        v-if="selected"
+        class="mt-4"
+        :project-id="projectId()"
+        node-type="defect"
+        :node-id="selected.id"
+      />
       <template #footer>
         <button
           type="button"
@@ -452,6 +495,13 @@ onMounted(async () => {
   overflow: hidden;
   white-space: pre-wrap;
   line-height: 1.4;
+}
+
+.status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
 }
 
 .detail-grid {

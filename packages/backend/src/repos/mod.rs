@@ -3,6 +3,7 @@
 //! 约定：每张表用 `*_COLS` 列投影 + `FromRow` 结构体；避免 `SELECT *` / `RETURNING *`。
 
 pub mod defect;
+pub mod dependency;
 pub mod email_log;
 pub mod email_token;
 pub mod harness;

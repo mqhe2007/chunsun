@@ -14,8 +14,8 @@ import {
 import { api } from "@/utils/api";
 import { REQUIREMENT_STATUS_LABEL } from "@/utils/workflow";
 import RequirementHarnessSection from "@/components/projects/RequirementHarnessSection.vue";
+import DependencySection from "@/components/projects/DependencySection.vue";
 import CopyableValue from "@/components/common/CopyableValue.vue";
-import UserAvatar from "@/components/common/UserAvatar.vue";
 
 type Requirement = {
   id: string;
@@ -346,6 +346,12 @@ onMounted(async () => {
             </div>
           </div>
         </section>
+
+        <DependencySection
+          :project-id="projectId"
+          node-type="requirement"
+          :node-id="requirement.id"
+        />
 
         <RequirementHarnessSection
           :key="requirement.id"
