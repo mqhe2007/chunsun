@@ -24,6 +24,7 @@ impl ApiClient {
     pub fn new(config: &CliConfig) -> Result<Self, ApiError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .user_agent(format!("chunsun-cli/{}", crate::version()))
             .build()?;
         Ok(Self {
             base_url: config.api_base_url.clone(),
