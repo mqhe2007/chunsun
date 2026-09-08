@@ -453,7 +453,7 @@ onMounted(async () => {
             <ExternalLink :size="14" aria-hidden="true" />
           </router-link>
           <p v-else class="text-base-content/60 empty-feats">
-            尚未派生修复需求。在会话中执行 <code>/chunsun-fix {{ selected.id }}</code> 派生唯一修复需求并进入自主交付。
+            尚未派生修复需求。在会话中对技能说「修复缺陷 {{ selected.id }}」派生唯一修复需求并进入自主交付。
           </p>
         </div>
       </div>

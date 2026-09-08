@@ -15,33 +15,42 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > 2026-08-21（续）：CLI `init` / `update` 改为运行时 `GET /harness/template` 拉取，不再 `include_str!` 内嵌正文。
 > 2026-08-21-finished-stop：技能停点 CLI 从废弃的 `paused` 改为 `finished`（与 run-status-v2 对齐）。
 > 2026-08-27-knowledge-load-strategy：context→knowledge/memory 重命名落地到技能协议；知识文档增加 eager/lazy 加载策略与 knowledge index/doc 按需拉取。
-> 2026-09-02-dependency-scheduling：Agent 依赖感知与调度落地——`/chunsun` 协议新增「执行前依赖检查 / 调度决策 / 完成后解锁」三步；技能新增「依赖调度」节；commands.md 新增 `chunsun dependency list|schedule|blocked|unlock` 命令参考（后端新增对应调度分析端点）。
-> 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI；斜线命令 / commands / loop-rules 加宿主指针与边界措辞对齐。
+> 2026-09-02-dependency-scheduling：Agent 依赖感知与调度落地——交付协议新增「执行前依赖检查 / 调度决策 / 完成后解锁」三步；技能新增「依赖调度」节；commands.md 新增 `chunsun dependency list|schedule|blocked|unlock` 命令参考（后端新增对应调度分析端点）。
+> 2026-09-08-skill-only-harness：**斜线命令模板与规则模板并入技能模板**——技能成为唯一 harness 载体：
+> ①删除 `slash/chunsun.md`、`slash/chunsun-fix.md`，/chunsun-fix 派生流程并入 skill.md「缺陷修复派生」节；
+> ②skill.md 新增「意图路由」节（自然语言 / "/" 调出均由技能分析意图路由：需求交付 / 缺陷修复 / 查询 / 重来 / 豁免）；
+> ③核心规则不再安装为各 IDE 常驻规则文件（`<ide>/rules/chunsun-workflow-gates.*`），改为技能激活期间恒生效（启动必读 `references/loop-rules.md`）；
+> ④CLI 不再安装 `<ide>/commands`、`<ide>/rules` 下任何文件，并在升级时迁移清理旧产物与 AGENTS.md/CLAUDE.md 桥接段落；
+> ⑤知识库渐进式加载机制（eager/lazy + index/doc 按需拉取）不受影响。
+> 旧 CLI（≤0.5.1）对新实例 `init` 会因 payload 缺 slash 文件报错，经 `chunsun update` 升级二进制后自动收敛。
+>
+> 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选
 > IDE 的 `<ide>/skills/chunsun/`（Cursor/Trae/Qoder/CodeBuddy 分别落在 `.cursor`/`.trae`/`.qoder`/`.codebuddy`）；
 > 不再维护 `.agents`。`init` 按交互/ `--ide` 选择目标 IDE。
 >
-> 2026-08-07-rules-agents-bridge：四家 IDE 的规则文件全部包裹含 `alwaysApply: true` 的 frontmatter
-> （此前仅 Cursor 包裹，Trae/Qoder/CodeBuddy 裸 .md 不常驻生效）；各 IDE frontmatter 在 `src/ide.rs`
-> 独立维护，新增 IDE 单独加配置。新增仓库根 `AGENTS.md` 桥接段落（marker 管理、幂等）作跨 IDE 常驻层双保险；
-> `skill.md` 正文的验收定义/停点/三层边界收敛为对 `references/loop-rules.md` 的引用（引用而非复制）。
+> 2026-08-07-rules-agents-bridge（已于 2026-09-08-skill-only-harness 撤销）：四家 IDE 的规则文件包裹含
+> `alwaysApply: true` 的 frontmatter；新增仓库根 `AGENTS.md` 桥接段落。2026-09-08 起 harness 不再管理
+> AGENTS.md / CLAUDE.md，也不再安装规则文件——相关内容全部由技能暴露。
 >
-> 2026-08-13-claude-code：新增 ClaudeCode 目标（`.claude/skills|commands|rules`）。Claude Code 与 Cursor 有
-> 两处关键差异：① 规则**没有 `alwaysApply` 字段**——官方文档仅支持 `paths`，省略 frontmatter 即全局规则、
-> 启动时无条件加载，故 Claude Code 的规则文件不包裹 frontmatter，直接落盘正文（`RULES_FRONTMATTER_CLAUDE_CODE` 为空）；
-> ② 官方读取仓库根 `CLAUDE.md` 而非 AGENTS.md，故 ClaudeCode 额外维护 `CLAUDE.md` 桥接（同一 marker 语义、幂等，
-> 由 `IdeTarget::writes_claude_md` 门控），AGENTS.md 桥接仍写以保留给其它 IDE。斜线命令仍装 `.claude/commands/*.md`
-> （官方确认旧格式有效）；同名 skill 优先，`/chunsun` 由 `.claude/skills/chunsun/SKILL.md` 承担（内容更完整）。
+> 2026-08-13-claude-code：新增 ClaudeCode 目标（`.claude/skills`）。2026-09-08 起斜线命令与规则文件
+> 不再安装，仅技能本体落在 `.claude/skills/chunsun/`。
 
-| Template file | TS export / source | Install path (when relevant) |
-| --- | --- | --- |
-| `skill.md` | `SKILL_CONTENT` from `skill.ts` | `<ide.skillsDir>/chunsun/SKILL.md`（按 `init` 所选 IDE） |
-| `commands.md` | `COMMANDS_CONTENT` from `commands.ts` | `<ide.skillsDir>/chunsun/references/commands.md` |
-| `loop-rules.md` | Body of `LOOP_RULES_RULE` from `workflow/loopRules.ts` **without** Cursor YAML frontmatter | `<ide.skillsDir>/chunsun/references/loop-rules.md`（plain）；另按 IDE 包裹 frontmatter 装到 `{ide.rulesDir}/{ide.rulesFilename}`（Cursor/Trae/Qoder/CodeBuddy 含 `alwaysApply: true`，Cursor 为 `.mdc`、其余 `.md`；**Claude Code 例外**：无 frontmatter，省略即全局加载） |
-| `slash/chunsun.md` | `SLASH_COMMANDS["chunsun.md"]` from `workflow/slashCommands.ts` | `{ide.commandsDir}/chunsun.md` |
-| `slash/chunsun-fix.md` | `SLASH_COMMANDS["chunsun-fix.md"]` from `workflow/slashCommands.ts` | `{ide.commandsDir}/chunsun-fix.md` |
-| （Rust 生成，非模板文件） | `agents_bridge_section` in `harness.rs` | 仓库根 `AGENTS.md`（全部 IDE）与 `CLAUDE.md`（仅 ClaudeCode）的 `<!-- chunsun:begin/end -->` 段落：marker 内整体替换，marker 外不动；无 marker 追加，无文件创建 |
+| Template file | Install path |
+| --- | --- |
+| `skill.md` | `<ide.skillsDir>/chunsun/SKILL.md`（按 `init` 所选 IDE；唯一 harness 载体，含意图路由/交付协议/缺陷修复派生） |
+| `commands.md` | `<ide.skillsDir>/chunsun/references/commands.md` |
+| `loop-rules.md` | `<ide.skillsDir>/chunsun/references/loop-rules.md`（技能激活期间恒生效；不再另行安装到 `<ide>/rules`） |
+
+## Removed in 2026-09-08-skill-only-harness
+
+| Removed template | Reason |
+| --- | --- |
+| `slash/chunsun.md` | 斜线命令模板并入技能：技能可由自然语言或 "/" 调出，交付协议即 skill.md「自主交付协议」 |
+| `slash/chunsun-fix.md` | 派生修复流程并入 skill.md「缺陷修复派生」节 |
+| （规则文件安装，非模板删除）`<ide>/rules/chunsun-workflow-gates.*` | 规则随技能激活恒生效，读 `references/loop-rules.md`，不再单独安装常驻规则文件 |
+| （AGENTS.md / CLAUDE.md 桥接，Rust 生成） | harness 不再管理仓库根桥接文件；升级时自动剥离旧 marker 段落 |
 
 ## Removed in harness hard-cut (2026-08-06)
 
@@ -56,11 +65,10 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 
 | TS export | Reason |
 | --- | --- |
-| `LOOP_RULES_RULE` (full, with frontmatter) | Full Cursor `.mdc` form kept only in TS; `loop-rules.md` is the plain body. Rust may re-wrap frontmatter per IDE. |
+| `LOOP_RULES_RULE` (full, with frontmatter) | Full Cursor `.mdc` form kept only in TS; `loop-rules.md` is the plain body.（2026-09-08 起规则不再按 IDE 包裹 frontmatter 安装） |
 | `listWorkflowInstallFiles` / index re-exports | Orchestration only, not prompt bodies. |
 
 ## Naming notes
 
-- `loop-rules.md` 无 frontmatter（仅正文）；Rust 端按 IDE 包裹各自的 alwaysApply frontmatter
-  （Cursor/Trae/Qoder/CodeBuddy 需要，否则规则不常驻生效；Claude Code 例外——无 alwaysApply 字段，省略 frontmatter 即全局加载）。
-- 中文文件名仅存在于历史版本；harness 硬切后斜线命令统一英文名（`chunsun.md` / `chunsun-fix.md`）。
+- `loop-rules.md` 无 frontmatter（仅正文），作为技能引用安装（`references/loop-rules.md`），技能激活期间恒生效；不再按 IDE 包裹 frontmatter 安装常驻规则文件。
+- 中文文件名仅存在于历史版本；斜线命令模板已于 2026-09-08 并入技能（skill.md「意图路由」+「缺陷修复派生」）。

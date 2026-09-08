@@ -215,7 +215,7 @@ pub fn resolve_ide_for_init(
         .position(|t| t.id == DEFAULT_IDE_ID)
         .unwrap_or(0);
     let selected = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("选择目标 IDE（决定技能 / 斜线命令 / 门禁规则的安装目录）：")
+        .with_prompt("选择目标 IDE（决定技能安装目录）：")
         .default(default_idx)
         .items(&labels)
         .interact()
@@ -326,9 +326,15 @@ pub fn run(args: InitArgs) -> CmdResult {
             None => result.template_version.clone(),
         };
         println!(
-            "[chunsun] 已从实例拉取模板并刷新技能/斜线命令/门禁（{from}），写入 {} 个文件。",
+            "[chunsun] 已从实例拉取模板并刷新技能（{from}），写入 {} 个文件。",
             result.written.len()
         );
+        if !result.cleaned.is_empty() {
+            println!(
+                "[chunsun] 已清理旧版 harness 产物 {} 项（斜线命令 / 常驻规则 / AGENTS.md 桥接已并入技能）。",
+                result.cleaned.len()
+            );
+        }
     } else if !result.reused.is_empty() {
         println!(
             "[chunsun] 模板已是最新（{}），复用 {} 个文件（--force 可强制覆盖）。",
@@ -336,7 +342,9 @@ pub fn run(args: InitArgs) -> CmdResult {
             result.reused.len()
         );
     }
-    println!("[chunsun] 下一步：在 chat 中执行 `/探索 <需求ID>`，或说「开始探索需求」。");
+    println!(
+        "[chunsun] 下一步：在 chat 中说「开始需求 <需求ID>」「修复缺陷 <缺陷ID>」等，或用 `/chunsun` 调出技能——技能会自动分析意图路由。"
+    );
     Ok(())
 }
 
