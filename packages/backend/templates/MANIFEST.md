@@ -24,6 +24,13 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ⑤知识库渐进式加载机制（eager/lazy + index/doc 按需拉取）不受影响。
 > 旧 CLI（≤0.5.1）对新实例 `init` 会因 payload 缺 slash 文件报错，经 `chunsun update` 升级二进制后自动收敛。
 >
+> 2026-09-08-memory-overhaul：工作记忆机制彻底优化（缺陷 dutztumK-Sjz）——
+> ①skill.md「Memory」节新增「写入时机（强制）」：边界澄清/待决策/关键实现随手记、每轮收尾前必写 lastRunSummary、
+> 「声称即写入」（只在回复里声称写入等同没写）；交付协议收尾步骤补「先写 lastRunSummary 再迁移 Run 状态」；
+> ②loop-rules.md 新增「Memory（工作记忆）」节（声称即写入 / 收尾前必写 / 20k 上限与 SNAPSHOT_REQUIRED 拒绝）；
+> ③配套实现：CLI `run remind` 新增「本轮未写记忆」柔性提醒；后端 PUT memory 缺 snapshot 字段 400、超 20k 字符 400；
+> ④console 需求详情「工作记忆」面板完整渲染五字段（此前只显示 openDecisions+codeLandmarks，是「记忆没生效」症状的展示层根因）。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

@@ -120,6 +120,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
      - chunsun dependency unlock requirement <ID>  查询本需求完成后解锁哪些下游
      - 将解锁结果写入工作记忆，若下游任务在待办清单中，提醒其可进入执行
   6. 收尾/完成时输出：本轮 Step 摘要 + 验收状态 + 依赖解锁情况 + 下一步建议
+     （任何 completed/finished 之前，先按「Memory」节写入 lastRunSummary，再迁移 Run 状态）
 ```
 
 **停点只有三种**（验收全绿 / 需用户决策 / 用户打断）与 completed 平台硬条件见 `references/loop-rules.md`「停点」；平台拒绝时返回 COMPLETION_GATE_NOT_MET，不要绕过。
@@ -166,7 +167,15 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 - `codeLandmarks`：关键代码位置/摘要（不存代码本体）
 - `envRefs`：引用的环境变量 key
 
-**粒度严控**（整体 ~20k 字符内）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+**写入时机（强制）**：
+
+1. **边界澄清后** → 立即 `memory put` 写 `requirementSnapshot`。
+2. **出现待用户决策项** → 立即写 `openDecisions`（平台会触发通知）；用户答复后及时更新/清空。
+3. **定位到关键实现** → 随手写 `codeLandmarks`；引用环境变量即记 `envRefs`。
+4. **每轮 Run 收尾（completed / finished）前** → 必须写 `lastRunSummary`：本轮做了什么 / 关键决策与理由 / 结果 / 下一步建议。不写则断点不可续。
+5. **声称即写入**：在回复里说「已写入工作记忆」必须真的调用过 `memory put`——只在文字里声称等同没写。`chunsun run remind` 会检查本轮 Run 是否写过记忆，未写会在进下一轮 prompt 前提醒。
+
+**粒度严控**（整体 ~20k 字符内，超限平台拒绝写入 `MEMORY_TOO_LARGE`）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
 
 ## Knowledge（项目知识，按需渐进式披露）
 

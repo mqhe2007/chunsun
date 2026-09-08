@@ -25,6 +25,12 @@
 - Agent 管"下一步做什么"；平台管"状态合不合法"；CLI / Agent 工具管"事实搬运与提醒"。
 - 不要臆造平台状态：以平台经 `chunsun` CLI 或 `chunsun_*` Agent 工具的真实返回为准。
 
+## Memory（工作记忆）
+
+- 「声称即写入」：说「已写入工作记忆」必须真的调用过 `memory put`，只在回复里声称等同没写。
+- 每轮 Run 收尾（completed / finished）前必须写 `lastRunSummary`；`chunsun run remind` 会检查本轮是否写过记忆并提醒。
+- snapshot 整体 ≤ 20k 字符，超限平台拒绝（`MEMORY_TOO_LARGE`）；PUT 缺 `snapshot` 字段平台拒绝（`SNAPSHOT_REQUIRED`）。
+
 ## RRI（评审-反思-改进）
 
 - 四类关键环节要做一次 RRI 并上报 `reflect` Step：code 后进 test 前、failing 修复后、completed 前、用户反馈后。

@@ -199,11 +199,12 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
         reminders.push(format!("场景「{}」当前为 failing，需修复后置 passing。", s.title));
     }
 
-    if let Some(context) = api
+    // 工作记忆拉取一次，供 openDecisions 与「本轮未写记忆」两处检查共用（404/失败按无记忆处理）。
+    let memory = api
         .get::<Value>(&format!("{}/memory", req_path(project_id, req)))
         .ok()
-        .and_then(|v| v.get("data").cloned())
-    {
+        .and_then(|v| v.get("data").cloned());
+    if let Some(context) = &memory {
         let open = context
             .get("snapshot")
             .and_then(|s| s.get("openDecisions"))
@@ -216,6 +217,17 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
     }
 
     if let Some(run) = runs.iter().find(|r| r.status == "running") {
+        // 本轮未写记忆：memory 不存在或 updatedAt 未晚于本 Run 开始时间（秒级）。
+        let memory_updated_at = memory
+            .as_ref()
+            .and_then(|m| m.get("updatedAt"))
+            .and_then(|v| v.as_str());
+        if memory_stale_for_run(memory_updated_at, &run.started_at) {
+            reminders.push(
+                "当前 Run 尚未写入工作记忆——收尾（completed/finished）前必须用 memory put 写 lastRunSummary，否则断点不可续（声称写入 ≠ 已写入）。"
+                    .into(),
+            );
+        }
         let steps: ListResponse<Vec<Step>> = api.get(&format!(
             "{}/runs/{}/steps",
             req_path(project_id, req),
@@ -818,4 +830,53 @@ pub fn run_fix(args: FixArgs) -> CmdResult {
     println!("[chunsun] 修复需求已派生：{req_id}，Run #{} 已启动。", run.index);
     println!("  下一步：直接进入自主交付迭代（/chunsun {req_id} 也可继续）。");
     Ok(())
+}
+
+/// 截断 RFC3339 时间戳到秒（去小数位与 Z/时区后缀）。
+/// 两侧时间戳同源（后端 serde 序列化 DateTime<Utc>），秒级比较对柔性提醒足够，避免引入 chrono。
+fn rfc3339_to_second(ts: &str) -> &str {
+    let end = ts.find(['.', 'Z', '+']).unwrap_or(ts.len());
+    &ts[..end]
+}
+
+/// 「本轮未写记忆」判定：memory 不存在，或 memory.updatedAt 未晚于 run.startedAt（秒级）。
+/// 等值视为未写——收尾前写入是本 Run 的动作，updatedAt 必须严格晚于 startedAt 才算本轮写过。
+fn memory_stale_for_run(memory_updated_at: Option<&str>, run_started_at: &str) -> bool {
+    match memory_updated_at {
+        None => true,
+        Some(u) => rfc3339_to_second(u) <= rfc3339_to_second(run_started_at),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rfc3339_second_truncates_fraction_and_zone() {
+        assert_eq!(rfc3339_to_second("2026-09-08T04:38:26.272173Z"), "2026-09-08T04:38:26");
+        assert_eq!(rfc3339_to_second("2026-09-08T04:38:26Z"), "2026-09-08T04:38:26");
+        assert_eq!(rfc3339_to_second("2026-09-08T04:38:26"), "2026-09-08T04:38:26");
+    }
+
+    #[test]
+    fn memory_stale_when_absent_or_not_newer_than_run_start() {
+        // memory 不存在 → 未写
+        assert!(memory_stale_for_run(None, "2026-09-08T04:38:26.272173Z"));
+        // updatedAt 早于 startedAt → 未写
+        assert!(memory_stale_for_run(
+            Some("2026-09-08T04:00:00Z"),
+            "2026-09-08T04:38:26.272173Z"
+        ));
+        // 同秒（updatedAt 截断后 == startedAt 截断后）→ 视为未写
+        assert!(memory_stale_for_run(
+            Some("2026-09-08T04:38:26.99Z"),
+            "2026-09-08T04:38:26.272173Z"
+        ));
+        // updatedAt 晚于 startedAt → 本轮已写，不提醒
+        assert!(!memory_stale_for_run(
+            Some("2026-09-08T05:00:00Z"),
+            "2026-09-08T04:38:26.272173Z"
+        ));
+    }
 }
