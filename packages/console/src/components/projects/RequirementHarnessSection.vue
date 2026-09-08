@@ -53,13 +53,15 @@ type ContextRow = {
   id: string;
   requirementId: string;
   snapshot: {
+    requirementSnapshot?: unknown;
+    lastRunSummary?: unknown;
     openDecisions?: Array<{
       raisedAt?: string;
       question?: string;
       context?: string;
     }>;
     codeLandmarks?: Array<{ path?: string; symbol?: string; note?: string }>;
-    lastRunSummary?: unknown;
+    envRefs?: unknown[];
   };
   updatedAt: string;
 };
@@ -257,6 +259,41 @@ function landmarkTitle(l: unknown): string {
   return landmarkText(l);
 }
 
+/** 通用 JSON 美化：requirementSnapshot / lastRunSummary 等自由结构字段的展示 */
+function prettyJson(v: unknown): string {
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2) ?? String(v);
+  } catch {
+    return String(v);
+  }
+}
+
+/** 判断自由结构字段是否「有内容」（null/undefined/空对象/空数组/空串视为无） */
+function hasContent(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as object).length > 0;
+  return true;
+}
+
+/** 环境变量引用项展示文本，兼容 "KEY" 与 { key: "KEY" } 等结构 */
+function envRefText(e: unknown): string {
+  if (typeof e === "string") return e.trim() || "（无 key）";
+  if (e && typeof e === "object") {
+    const obj = e as Record<string, unknown>;
+    for (const key of ["key", "name", "envKey", "variable"]) {
+      const v = obj[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "（无 key）";
+}
+
 async function loadSteps(runId: string) {
   if (stepsByRun.value[runId]) return;
   stepsLoading.value[runId] = true;
@@ -363,9 +400,29 @@ onMounted(fetchAll);
         </span>
       </div>
 
-      <p v-if="!context" class="empty-hint text-base-content/60">暂无 Context。</p>
+      <p v-if="!context" class="empty-hint text-base-content/60">
+        暂无工作记忆——交付循环中由 Agent 经 memory put 写入。
+      </p>
       <template v-else>
-        <div class="context-blocks">
+        <div class="context-blocks context-blocks--grid">
+          <div class="context-block">
+            <h3 class="context-label">已澄清边界</h3>
+            <pre
+              v-if="hasContent(context.snapshot.requirementSnapshot)"
+              class="snapshot-pre"
+            >{{ prettyJson(context.snapshot.requirementSnapshot) }}</pre>
+            <p v-else class="empty-hint text-base-content/60">暂无已澄清边界。</p>
+          </div>
+
+          <div class="context-block">
+            <h3 class="context-label">上一轮摘要</h3>
+            <pre
+              v-if="hasContent(context.snapshot.lastRunSummary)"
+              class="snapshot-pre"
+            >{{ prettyJson(context.snapshot.lastRunSummary) }}</pre>
+            <p v-else class="empty-hint text-base-content/60">暂无上轮摘要。</p>
+          </div>
+
           <div class="context-block">
             <h3 class="context-label">未决决策</h3>
             <div
@@ -384,12 +441,12 @@ onMounted(fetchAll);
             <p v-else class="empty-hint text-base-content/60">无未决 open decision。</p>
           </div>
 
-          <div
-            v-if="context.snapshot.codeLandmarks?.length"
-            class="context-block"
-          >
+          <div class="context-block">
             <h3 class="context-label">代码标记</h3>
-            <div class="landmarks">
+            <div
+              v-if="context.snapshot.codeLandmarks?.length"
+              class="landmarks"
+            >
               <span
                 v-for="(l, i) in context.snapshot.codeLandmarks"
                 :key="i"
@@ -399,6 +456,21 @@ onMounted(fetchAll);
                 {{ landmarkText(l) }}
               </span>
             </div>
+            <p v-else class="empty-hint text-base-content/60">暂无代码标记。</p>
+          </div>
+
+          <div class="context-block">
+            <h3 class="context-label">环境变量引用</h3>
+            <div v-if="context.snapshot.envRefs?.length" class="landmarks">
+              <span
+                v-for="(e, i) in context.snapshot.envRefs"
+                :key="i"
+                class="landmark-item"
+              >
+                {{ envRefText(e) }}
+              </span>
+            </div>
+            <p v-else class="empty-hint text-base-content/60">暂无环境变量引用。</p>
           </div>
         </div>
       </template>
@@ -970,21 +1042,31 @@ onMounted(fetchAll);
 }
 
 .context-blocks {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 0.85rem;
 }
 
 @media (min-width: 720px) {
-  .context-blocks {
-    flex-direction: row;
-    gap: 1.5rem;
+  .context-blocks--grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem 1.5rem;
   }
+}
 
-  .context-blocks .context-block {
-    flex: 1;
-    min-width: 0;
-  }
+.snapshot-pre {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: var(--color-base-200);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-height: 16rem;
+  overflow-y: auto;
 }
 
 .context-block + .context-block {

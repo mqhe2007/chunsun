@@ -99,15 +99,39 @@ struct StepBody {
     artifacts: Option<Value>,
 }
 
-// 旧端 body schema 是 `t.Object({ snapshot: t.Any() })`；TypeBox 的 t.Any() **允许缺字段**，
-// 缺失时把 undefined 透给 Prisma —— 分两条路：
-//   update 路径（context 已存在）：`data: { snapshot: undefined }` 退化为空 data，跳过该列；
-//   create 路径（context 不存在）：必填缺参 → 500（Argument `snapshot` is missing）。
-// 显式 null 则真落库：列是 `Json` 非空，存 jsonb 'null'。故必须三态，扁平 Option 会把 null 吞成缺失。
+// 旧端 body schema 是 `t.Object({ snapshot: t.Any() })`；TypeBox 的 t.Any() **允许缺字段**。
+// 三态保留（显式 null = 落 jsonb 'null'），但「字段缺失」不再静默退化——put_memory
+// 处理器直接 400 SNAPSHOT_REQUIRED（缺失即调用方 bug，静默回旧行会误诊为已写入）。
 #[derive(Debug, Deserialize)]
 struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
     snapshot: Option<Option<Value>>,
+}
+
+/// 工作记忆 snapshot 粒度上限（字符数）：协议约定整体 ~20k 字符内，超出拒绝写入。
+const MEMORY_SNAPSHOT_MAX_CHARS: usize = 20_000;
+
+/// 校验 PUT memory 的 snapshot 三态，通过则返回可下传仓储层的值：
+/// - 字段缺失 → 400 SNAPSHOT_REQUIRED（缺失即调用方 bug；旧行为静默回旧行返 200，
+///   会让调用方误以为已写入，是「工作记忆没生效」类缺陷的温床）
+/// - 显式 null → 放行（落 jsonb 'null'，复刻旧端语义）
+/// - 序列化超 20k 字符 → 400 MEMORY_TOO_LARGE（Memory 是唯一进 prompt 的工作记忆，粒度严控）
+fn validate_memory_snapshot(
+    snapshot: &Option<Option<Value>>,
+) -> Result<Option<&Value>, AppError> {
+    let Some(value) = snapshot.as_ref().map(|v| v.as_ref()) else {
+        return Err(AppError::bad_request("SNAPSHOT_REQUIRED"));
+    };
+    if let Some(v) = value {
+        let len = serde_json::to_string(v)
+            .map_err(|e| AppError::internal(format!("snapshot 序列化失败：{e}")))?
+            .chars()
+            .count();
+        if len > MEMORY_SNAPSHOT_MAX_CHARS {
+            return Err(AppError::bad_request("MEMORY_TOO_LARGE"));
+        }
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Deserialize)]
@@ -500,13 +524,12 @@ async fn put_memory(
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
+    let snapshot = validate_memory_snapshot(&body.snapshot)?;
     let prev_open = get_memory(&state.pool(), &p.requirement_id, &p.project_id)
         .await?
         .map(|m| open_decisions_len(&m.snapshot))
         .unwrap_or(0);
-    // 三态原样下传，缺失/显式 null 的分叉由仓储层按 update / create 路径各自复刻。
-    let snapshot = body.snapshot.as_ref().map(|v| v.as_ref());
-    let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, snapshot).await?;
+    let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, Some(snapshot)).await?;
     let now_open = open_decisions_len(&ctx.snapshot);
     if prev_open == 0 && now_open > 0 {
         if let Some(recipient) =
@@ -888,7 +911,7 @@ mod tests {
 
     #[test]
     fn context_snapshot_is_tri_state() {
-        // 缺失 → update 路径跳过该列 / create 路径 500
+        // 缺失 → 反序列化为 None（put_memory 处 400 SNAPSHOT_REQUIRED）
         let b: MemoryBody = serde_json::from_str("{}").unwrap();
         assert_eq!(b.snapshot, None);
         // 显式 null → 落 jsonb 'null'（列非空，不是 SQL NULL）
@@ -900,6 +923,28 @@ mod tests {
         // t.Any() 不限类型：标量 / 数组同样合法
         let b: MemoryBody = serde_json::from_str(r#"{"snapshot":"s"}"#).unwrap();
         assert_eq!(b.snapshot, Some(Some(Value::String("s".into()))));
+    }
+
+    #[test]
+    fn memory_snapshot_validation_rejects_missing_and_oversize() {
+        // 缺失 → SNAPSHOT_REQUIRED（不再静默回旧行）
+        let err = validate_memory_snapshot(&None).unwrap_err();
+        assert_eq!(err.code, "SNAPSHOT_REQUIRED");
+        // 显式 null → 放行
+        assert_eq!(validate_memory_snapshot(&Some(None)).unwrap(), None);
+        // 正常值 → 放行
+        let v = serde_json::json!({"lastRunSummary": {"note": "x"}});
+        assert_eq!(
+            validate_memory_snapshot(&Some(Some(v.clone()))).unwrap(),
+            Some(&v)
+        );
+        // 超 20k 字符 → MEMORY_TOO_LARGE
+        let big = serde_json::json!({"blob": "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS)});
+        let err = validate_memory_snapshot(&Some(Some(big))).unwrap_err();
+        assert_eq!(err.code, "MEMORY_TOO_LARGE");
+        // 恰好贴边（序列化后 ≤ 上限）→ 放行
+        let edge = serde_json::json!({"blob": "x".repeat(100)});
+        assert!(validate_memory_snapshot(&Some(Some(edge))).is_ok());
     }
 
     #[test]

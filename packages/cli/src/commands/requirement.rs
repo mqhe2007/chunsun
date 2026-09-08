@@ -458,3 +458,33 @@ pub fn run(args: RequirementArgs) -> CmdResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_snapshot_patches_top_level_keys_only() {
+        // patch 覆盖同名 key，既有 key 保留（CLI 增量合并语义——服务端 PUT 是全量替换，
+        // 合并发生在客户端，这正是「必须经 CLI 写记忆」的原因）
+        let existing = json!({
+            "requirementSnapshot": {"scope": "A"},
+            "openDecisions": [{"question": "q1"}]
+        });
+        let patch = json!({"lastRunSummary": {"note": "done"}});
+        let merged = merge_snapshot(&existing, &patch);
+        assert_eq!(merged["requirementSnapshot"], json!({"scope": "A"}));
+        assert_eq!(merged["openDecisions"], json!([{"question": "q1"}]));
+        assert_eq!(merged["lastRunSummary"], json!({"note": "done"}));
+
+        // 同名 key 被 patch 整体替换（不做深合并）
+        let patch2 = json!({"openDecisions": []});
+        let merged2 = merge_snapshot(&merged, &patch2);
+        assert_eq!(merged2["openDecisions"], json!([]));
+        assert_eq!(merged2["requirementSnapshot"], json!({"scope": "A"}));
+
+        // existing 非对象（如 jsonb 'null'）→ 以空对象为底
+        let merged3 = merge_snapshot(&Value::Null, &patch);
+        assert_eq!(merged3, json!({"lastRunSummary": {"note": "done"}}));
+    }
+}
