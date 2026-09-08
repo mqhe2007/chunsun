@@ -10,19 +10,22 @@ use crate::ide::{default_ide_target, IdeId, IdeTarget, IDE_TARGETS};
 /// 已安装模板的版本文件名（落在 `<ide>/skills/chunsun/`）。
 pub const TEMPLATE_VERSION_FILENAME: &str = ".template-version";
 
-/// AGENTS.md 桥接段落的 marker：只管理 marker 之间的内容，其余不动。
+/// 历史 AGENTS.md / CLAUDE.md 桥接段落的 marker。
+/// 2026-09-08-skill-only-harness 起 harness 不再管理这两个文件；
+/// marker 仅用于升级迁移时剥离旧桥接段落。
 pub const AGENTS_BRIDGE_BEGIN: &str = "<!-- chunsun:begin -->";
 pub const AGENTS_BRIDGE_END: &str = "<!-- chunsun:end -->";
 
 /// 实例 `GET /harness/template` 返回的模板包（运行时真相源）。
+///
+/// 技能是唯一 harness 载体：斜线命令与常驻规则模板已并入技能模板，
+/// payload 仅含 SKILL.md / commands.md / loop-rules.md 三个文件。
 #[derive(Debug, Clone)]
 pub struct HarnessTemplateBundle {
     pub template_version: String,
     pub skill: String,
     pub commands: String,
     pub loop_rules: String,
-    pub slash_chunsun: String,
-    pub slash_chunsun_fix: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,8 +73,6 @@ pub fn fetch_harness_template(api: &ApiClient) -> Result<HarnessTemplateBundle, 
         skill: require_file(&data.files, "SKILL.md")?,
         commands: require_file(&data.files, "commands.md")?,
         loop_rules: require_file(&data.files, "loop-rules.md")?,
-        slash_chunsun: require_file(&data.files, "slash/chunsun.md")?,
-        slash_chunsun_fix: require_file(&data.files, "slash/chunsun-fix.md")?,
     })
 }
 
@@ -79,132 +80,6 @@ pub fn fetch_harness_template(api: &ApiClient) -> Result<HarnessTemplateBundle, 
 pub struct WorkflowInstallFile {
     pub relative_path: String,
     pub content: String,
-}
-
-fn rules_for_ide(ide: &IdeTarget, loop_rules: &str) -> String {
-    if ide.rules_frontmatter.is_empty() {
-        // Claude Code：规则没有 alwaysApply 字段，省略 frontmatter 即全局规则（启动时无条件加载）。
-        // 直接落盘正文，不包裹 Cursor 式 frontmatter。
-        loop_rules.to_string()
-    } else {
-        format!("{}{}", ide.rules_frontmatter, loop_rules)
-    }
-}
-
-pub fn list_workflow_install_files(
-    ide: &IdeTarget,
-    bundle: &HarnessTemplateBundle,
-) -> Vec<WorkflowInstallFile> {
-    let mut files = Vec::new();
-    files.push(WorkflowInstallFile {
-        relative_path: format!("{}/chunsun/references/loop-rules.md", ide.skills_dir),
-        content: bundle.loop_rules.clone(),
-    });
-    // 仅当该 IDE 支持门禁规则时才安装（WorkBuddy 不读取 .workbuddy/rules）。
-    if ide.supports_rules {
-        files.push(WorkflowInstallFile {
-            relative_path: format!("{}/{}", ide.rules_dir, ide.rules_filename),
-            content: rules_for_ide(ide, &bundle.loop_rules),
-        });
-    }
-    // 仅当该 IDE 支持斜线命令时才安装（WorkBuddy 不读取 .workbuddy/commands）。
-    if ide.supports_commands {
-        for (name, content) in [
-            ("chunsun.md", bundle.slash_chunsun.as_str()),
-            ("chunsun-fix.md", bundle.slash_chunsun_fix.as_str()),
-        ] {
-            files.push(WorkflowInstallFile {
-                relative_path: format!("{}/{}", ide.commands_dir, name),
-                content: content.to_string(),
-            });
-        }
-    }
-    files
-}
-
-/// AGENTS.md 桥接段落内容（指针式，引用而非复制规则正文）。
-///
-/// 仅当 IDE 支持门禁规则时才在桥接段中引用规则文件；
-/// 否则（如 WorkBuddy）只指向技能，避免指向不存在的 `.workbuddy/rules` 路径。
-fn agents_bridge_section(ide: &IdeTarget) -> String {
-    let skill = format!("{}/chunsun/SKILL.md", ide.skills_dir);
-    let mut body = format!(
-        "{AGENTS_BRIDGE_BEGIN}\n## 春笋（chunsun）\n\n「春笋」是 AI 原生的项目交付平台。本仓库接入春笋自主交付 harness：涉及需求 / 缺陷 / 验收的工作一律走 `/chunsun <需求ID>` 或 `/chunsun-fix <缺陷ID>`。\n核心技能见 `{skill}`。"
-    );
-    if ide.supports_rules {
-        let rules = format!("{}/{}", ide.rules_dir, ide.rules_filename);
-        body.push_str(&format!(
-            " 核心规则（验收定义 / 停点 / 状态 / 边界）见 `{rules}`（常驻生效）。"
-        ));
-    }
-    body.push_str(&format!("\n{AGENTS_BRIDGE_END}"));
-    body
-}
-
-/// 在仓库根 markdown 文件维护 chunsun 桥接段落（跨 IDE 常驻层双保险）。
-///
-/// - 文件不存在 → 创建，仅含桥接段落；
-/// - 有完整 marker → 整体替换 marker 之间的内容，其余原样保留；
-/// - 有孤立 begin marker（损坏）→ 移除该 marker 后追加完整段落，不丢用户内容；
-/// - 无 marker → 末尾追加段落。
-///
-/// 幂等：内容无变化时计入 reused，不写盘。
-///
-/// 常规 IDE（Cursor 等）桥接到 `AGENTS.md`；Claude Code 官方读取 `CLAUDE.md` 而非
-/// AGENTS.md，故桥接到 `CLAUDE.md`（见 `IdeTarget::writes_claude_md`）。
-fn upsert_md_bridge(
-    cwd: &Path,
-    filename: &str,
-    ide: &IdeTarget,
-    reused: &mut Vec<String>,
-    written: &mut Vec<String>,
-) -> std::io::Result<()> {
-    let path = cwd.join(filename);
-    let section = agents_bridge_section(ide);
-    let existing = fs::read_to_string(&path).unwrap_or_default();
-
-    let next = if existing.is_empty() {
-        format!("# {filename}\n\n{section}\n")
-    } else if let Some(begin) = existing.find(AGENTS_BRIDGE_BEGIN) {
-        match existing[begin..].find(AGENTS_BRIDGE_END) {
-            Some(rel_end) => {
-                let end = begin + rel_end + AGENTS_BRIDGE_END.len();
-                format!("{}{}{}", &existing[..begin], section, &existing[end..])
-            }
-            None => {
-                let cleaned = existing.replacen(AGENTS_BRIDGE_BEGIN, "", 1);
-                let mut s = cleaned;
-                if !s.ends_with('\n') {
-                    s.push('\n');
-                }
-                format!("{s}\n{section}\n")
-            }
-        }
-    } else {
-        let mut s = existing.clone();
-        if !s.ends_with('\n') {
-            s.push('\n');
-        }
-        format!("{s}\n{section}\n")
-    };
-
-    if next == existing {
-        reused.push(filename.to_string());
-        return Ok(());
-    }
-    fs::write(&path, next)?;
-    written.push(filename.to_string());
-    Ok(())
-}
-
-/// 仓库根 AGENTS.md 桥接（常规 IDE 的跨 IDE 常驻层双保险）。
-fn upsert_agents_bridge(
-    cwd: &Path,
-    ide: &IdeTarget,
-    reused: &mut Vec<String>,
-    written: &mut Vec<String>,
-) -> std::io::Result<()> {
-    upsert_md_bridge(cwd, "AGENTS.md", ide, reused, written)
 }
 
 pub fn template_version_path(cwd: &Path, ide: &IdeTarget) -> PathBuf {
@@ -292,10 +167,31 @@ pub struct InstallSkillWorkspaceResult {
     pub skill_root: PathBuf,
     pub reused: Vec<String>,
     pub written: Vec<String>,
+    /// 本次安装迁移清理掉的旧 harness 产物（斜线命令 / 常驻规则 / 桥接段落）。
+    pub cleaned: Vec<String>,
     pub refreshed: bool,
     pub previous_version: Option<String>,
     pub template_version: String,
     pub ide: IdeId,
+}
+
+/// 技能目录（`<ide>/skills/chunsun/`）是唯一安装面：
+/// SKILL.md + references/commands.md + references/loop-rules.md + .template-version。
+fn skill_install_files(ide: &IdeTarget, bundle: &HarnessTemplateBundle) -> Vec<WorkflowInstallFile> {
+    vec![
+        WorkflowInstallFile {
+            relative_path: format!("{}/chunsun/SKILL.md", ide.skills_dir),
+            content: bundle.skill.clone(),
+        },
+        WorkflowInstallFile {
+            relative_path: format!("{}/chunsun/references/commands.md", ide.skills_dir),
+            content: bundle.commands.clone(),
+        },
+        WorkflowInstallFile {
+            relative_path: format!("{}/chunsun/references/loop-rules.md", ide.skills_dir),
+            content: bundle.loop_rules.clone(),
+        },
+    ]
 }
 
 pub fn install_skill_workspace(
@@ -307,24 +203,13 @@ pub fn install_skill_workspace(
     let ide = ide.unwrap_or_else(|| default_ide_target());
     let mut reused = Vec::new();
     let mut written = Vec::new();
+    let mut cleaned = Vec::new();
     let skill_root = cwd.join(ide.skills_dir).join("chunsun");
     let previous_version = read_installed_template_version(cwd);
     let refreshed =
         force || previous_version.as_deref() != Some(bundle.template_version.as_str());
 
-    let mut core_files = vec![
-        WorkflowInstallFile {
-            relative_path: format!("{}/chunsun/SKILL.md", ide.skills_dir),
-            content: bundle.skill.clone(),
-        },
-        WorkflowInstallFile {
-            relative_path: format!("{}/chunsun/references/commands.md", ide.skills_dir),
-            content: bundle.commands.clone(),
-        },
-    ];
-    core_files.extend(list_workflow_install_files(ide, bundle));
-
-    for file in &core_files {
+    for file in &skill_install_files(ide, bundle) {
         let abs = cwd.join(&file.relative_path);
         write_file_tracked(
             &abs,
@@ -350,25 +235,16 @@ pub fn install_skill_workspace(
         written.push(version_rel);
     }
 
-    // AGENTS.md 桥接段落（marker 管理、幂等）：跨 IDE 的常驻层双保险。
-    upsert_agents_bridge(cwd, ide, &mut reused, &mut written)?;
-
-    // Claude Code 官方读取 CLAUDE.md 而非 AGENTS.md：额外维护仓库根 CLAUDE.md 桥接
-    // （同一 marker 语义、幂等；AGENTS.md 桥接对 Claude Code 无效但保留给其它 IDE）。
-    if ide.writes_claude_md {
-        upsert_md_bridge(cwd, "CLAUDE.md", ide, &mut reused, &mut written)?;
-    }
-
-    // 迁移清理：不再维护 `.agents`，装完即移除其下 chunsun 旧产物（skills / commands / rules）。
-    // 目标即 Agents（`.agents`）时为合法安装目标，跳过清理避免误删本次产物。
-    if ide.id != IdeId::Agents {
-        cleanup_legacy_agents(cwd);
-    }
+    // 迁移清理：历史版本装在各 IDE 目录下的斜线命令与常驻规则、
+    // 旧 `.agents` 布局，以及 AGENTS.md / CLAUDE.md 桥接段落。
+    // harness 不再管理这些文件，装完即清理（幂等：不存在则无操作）。
+    cleanup_legacy_harness_files(cwd, ide, &mut cleaned);
 
     Ok(InstallSkillWorkspaceResult {
         skill_root,
         reused,
         written,
+        cleaned,
         refreshed,
         previous_version,
         template_version: bundle.template_version.clone(),
@@ -387,8 +263,7 @@ pub fn install_skill_workspace_from_api(
     install_skill_workspace(cwd, force, ide, &bundle).map_err(|e| ApiError::Message(e.to_string()))
 }
 
-/// 检测已安装的 IDE 目标：技能目录（`<ide>/skills/chunsun`）对每家 IDE 都会安装，
-/// 比仅靠 commands_dir 更稳健——WorkBuddy 没有 commands_dir，但仍会被正确识别。
+/// 检测已安装的 IDE 目标：技能目录（`<ide>/skills/chunsun`）对每家 IDE 都会安装。
 pub fn detect_installed_ide_targets(cwd: &Path) -> Vec<&'static IdeTarget> {
     IDE_TARGETS
         .iter()
@@ -396,69 +271,124 @@ pub fn detect_installed_ide_targets(cwd: &Path) -> Vec<&'static IdeTarget> {
         .collect()
 }
 
-/// 移除旧版 `.agents` 下 chunsun 自有的安装产物（迁移到 IDE 专属目录后不再维护 `.agents`）。
-///
-/// 旧版 chunsun 曾把技能、斜线命令、门禁规则全部装在 `.agents/` 下：
-/// - `.agents/skills/chunsun/`
-/// - `.agents/commands/chunsun.md`、`chunsun-fix.md`
-/// - `.agents/rules/chunsun-workflow-gates.*`（扩展名随旧 IDE 而定）
-///
-/// 仅删除 chunsun 明确拥有的文件/子目录，不动 `.agents` 下其它内容；
-/// 若 `skills`/`commands`/`rules` 因此变空则移除空目录，`.agents` 自身为空也一并移除。
-pub fn cleanup_legacy_agents(cwd: &Path) {
-    let agents = cwd.join(".agents");
-
-    // 1) 技能目录（整目录）
-    let legacy_skill = agents.join("skills").join("chunsun");
-    if legacy_skill.exists() {
-        let _ = fs::remove_dir_all(&legacy_skill);
-    }
-
-    // 2) 斜线命令：旧版整体装在 `.agents/commands` 下的 chunsun 命令文件
-    let legacy_commands = agents.join("commands");
-    if legacy_commands.exists() {
-        for name in ["chunsun.md", "chunsun-fix.md"] {
-            let p = legacy_commands.join(name);
-            if p.exists() {
-                let _ = fs::remove_file(&p);
+/// 从 markdown 内容中剥离全部 chunsun 桥接段落（含孤立 marker），返回剩余内容。
+fn strip_bridge_sections(content: &str) -> String {
+    let mut s = content.to_string();
+    while let Some(begin) = s.find(AGENTS_BRIDGE_BEGIN) {
+        match s[begin..].find(AGENTS_BRIDGE_END) {
+            Some(rel_end) => {
+                let end = begin + rel_end + AGENTS_BRIDGE_END.len();
+                s.replace_range(begin..end, "");
+            }
+            None => {
+                // 孤立 begin marker（损坏状态）：仅移除 marker 本身
+                s.replace_range(begin..begin + AGENTS_BRIDGE_BEGIN.len(), "");
             }
         }
     }
-
-    // 3) 门禁规则：`.agents/rules/chunsun-workflow-gates.*`（扩展名随旧 IDE 而定）
-    let legacy_rules = agents.join("rules");
-    if legacy_rules.exists() {
-        if let Ok(entries) = fs::read_dir(&legacy_rules) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let s = name.to_string_lossy();
-                if s.starts_with("chunsun-workflow-gates") {
-                    let _ = fs::remove_file(entry.path());
-                }
-            }
-        }
+    // 残留的孤立 end marker 一并移除
+    s = s.replace(AGENTS_BRIDGE_END, "");
+    // 收敛段落移除后留下的连续空行
+    while s.contains("\n\n\n") {
+        s = s.replace("\n\n\n", "\n\n");
     }
+    s.trim_end().to_string() + "\n"
+}
 
-    // 4) 子目录若因此变空则移除；`.agents` 自身为空也一并移除。
-    for sub in ["skills", "commands", "rules"] {
-        let dir = agents.join(sub);
-        if dir.exists() {
-            let is_empty = fs::read_dir(&dir)
-                .map(|mut it| it.next().is_none())
-                .unwrap_or(false);
-            if is_empty {
-                let _ = fs::remove_dir_all(&dir);
-            }
-        }
+/// 仓库根 markdown（AGENTS.md / CLAUDE.md）桥接清理：
+/// - 剥离 marker 段落后若仍有实质内容（除自动生成的标题外）→ 回写剩余内容；
+/// - 只剩自动创建时的标题壳（`# AGENTS.md` / `# CLAUDE.md`）或全空 → 删除文件。
+fn remove_bridge_file(cwd: &Path, filename: &str, cleaned: &mut Vec<String>) {
+    let path = cwd.join(filename);
+    let Ok(existing) = fs::read_to_string(&path) else {
+        return;
+    };
+    if !existing.contains(AGENTS_BRIDGE_BEGIN) && !existing.contains(AGENTS_BRIDGE_END) {
+        return;
     }
-    if agents.exists() {
-        let is_empty = fs::read_dir(&agents)
+    let stripped = strip_bridge_sections(&existing);
+    let remainder = stripped.trim();
+    let header_only = remainder == format!("# {filename}");
+    if remainder.is_empty() || header_only {
+        // 文件本就是 chunsun 自动创建的空壳，直接删除
+        let _ = fs::remove_file(&path);
+    } else {
+        let _ = fs::write(&path, stripped);
+    }
+    cleaned.push(filename.to_string());
+}
+
+fn remove_dir_if_empty(dir: &Path) {
+    if dir.exists() {
+        let is_empty = fs::read_dir(dir)
             .map(|mut it| it.next().is_none())
             .unwrap_or(false);
         if is_empty {
-            let _ = fs::remove_dir_all(&agents);
+            let _ = fs::remove_dir_all(dir);
         }
     }
+}
+
+/// 移除历史版本装在各 IDE 目录下的 chunsun 自有斜线命令与常驻规则文件。
+///
+/// 覆盖全部 IDE 目标（含 `.agents`）：这些文件不再安装，均为遗留产物；
+/// 同目录下非 chunsun 文件不动，目录清空后移除空目录。
+fn cleanup_legacy_commands_and_rules(cwd: &Path, cleaned: &mut Vec<String>) {
+    for target in IDE_TARGETS {
+        if !target.commands_dir.is_empty() {
+            let dir = cwd.join(target.commands_dir);
+            if dir.exists() {
+                for name in ["chunsun.md", "chunsun-fix.md"] {
+                    let p = dir.join(name);
+                    if p.exists() {
+                        let _ = fs::remove_file(&p);
+                        cleaned.push(format!("{}/{}", target.commands_dir, name));
+                    }
+                }
+                remove_dir_if_empty(&dir);
+            }
+        }
+        if !target.rules_dir.is_empty() {
+            let dir = cwd.join(target.rules_dir);
+            if dir.exists() {
+                if let Ok(entries) = fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let s = name.to_string_lossy();
+                        if s.starts_with("chunsun-workflow-gates") {
+                            let _ = fs::remove_file(entry.path());
+                            cleaned.push(format!("{}/{}", target.rules_dir, s));
+                        }
+                    }
+                }
+                remove_dir_if_empty(&dir);
+            }
+        }
+    }
+}
+
+/// 移除旧版 `.agents` 布局下 chunsun 自有的技能目录（迁移到 IDE 专属 skills 目录后不再维护）。
+///
+/// 仅当安装目标不是 `.agents` 时清理（目标即 Agents 时为合法安装产物）；
+/// `.agents` 下的 commands / rules 由 `cleanup_legacy_commands_and_rules` 统一处理。
+fn cleanup_legacy_agents_skills(cwd: &Path, cleaned: &mut Vec<String>) {
+    let legacy_skill = cwd.join(".agents").join("skills").join("chunsun");
+    if legacy_skill.exists() {
+        let _ = fs::remove_dir_all(&legacy_skill);
+        cleaned.push(".agents/skills/chunsun".to_string());
+    }
+    remove_dir_if_empty(&cwd.join(".agents").join("skills"));
+    remove_dir_if_empty(&cwd.join(".agents"));
+}
+
+/// 迁移清理总入口：历史斜线命令 / 常驻规则 / `.agents` 技能旧布局 / AGENTS.md·CLAUDE.md 桥接。
+pub fn cleanup_legacy_harness_files(cwd: &Path, ide: &IdeTarget, cleaned: &mut Vec<String>) {
+    cleanup_legacy_commands_and_rules(cwd, cleaned);
+    if ide.id != IdeId::Agents {
+        cleanup_legacy_agents_skills(cwd, cleaned);
+    }
+    remove_bridge_file(cwd, "AGENTS.md", cleaned);
+    remove_bridge_file(cwd, "CLAUDE.md", cleaned);
 }
 
 #[derive(Debug)]
@@ -497,12 +427,6 @@ pub fn refresh_installed_skill_templates(
         });
     }
 
-    let detected = detect_installed_ide_targets(cwd);
-    let targets: Vec<&IdeTarget> = if detected.is_empty() {
-        vec![default_ide_target()]
-    } else {
-        detected
-    };
     let stale = is_skill_template_stale(cwd, &bundle.template_version);
 
     for ide in &targets {
@@ -538,9 +462,6 @@ mod tests {
             skill: include_str!("../../backend/templates/skill.md").to_string(),
             commands: include_str!("../../backend/templates/commands.md").to_string(),
             loop_rules: include_str!("../../backend/templates/loop-rules.md").to_string(),
-            slash_chunsun: include_str!("../../backend/templates/slash/chunsun.md").to_string(),
-            slash_chunsun_fix: include_str!("../../backend/templates/slash/chunsun-fix.md")
-                .to_string(),
         }
     }
 
@@ -560,7 +481,69 @@ mod tests {
         assert!(!again.reused.is_empty());
     }
 
-    /// 硬切：只安装 /chunsun /chunsun-fix 两个斜线命令，旧命令与门禁/排期/阶段引用不再落盘。
+    /// 技能单点安装：所有 IDE 目标只落盘技能目录，不写斜线命令、常驻规则，
+    /// 也不创建/修改仓库根 AGENTS.md 与 CLAUDE.md。
+    #[test]
+    fn skill_is_the_only_install_surface() {
+        for ide in IDE_TARGETS {
+            let dir = tempdir().unwrap();
+            install_skill_workspace(dir.path(), false, Some(ide), &fixture_bundle()).unwrap();
+
+            // 技能本体 + 引用 + 版本文件
+            assert!(
+                dir.path().join(format!("{}/chunsun/SKILL.md", ide.skills_dir)).is_file(),
+                "{} 应安装 SKILL.md",
+                ide.id,
+            );
+            assert!(dir
+                .path()
+                .join(format!("{}/chunsun/references/commands.md", ide.skills_dir))
+                .is_file());
+            assert!(dir
+                .path()
+                .join(format!("{}/chunsun/references/loop-rules.md", ide.skills_dir))
+                .is_file());
+            assert!(dir
+                .path()
+                .join(format!("{}/chunsun/{}", ide.skills_dir, TEMPLATE_VERSION_FILENAME))
+                .is_file());
+
+            // 不安装斜线命令与常驻规则
+            if !ide.commands_dir.is_empty() {
+                assert!(
+                    !dir.path().join(format!("{}/chunsun.md", ide.commands_dir)).exists(),
+                    "{} 不应安装斜线命令",
+                    ide.id,
+                );
+                assert!(
+                    !dir.path().join(format!("{}/chunsun-fix.md", ide.commands_dir)).exists(),
+                    "{} 不应安装斜线命令",
+                    ide.id,
+                );
+            }
+            if !ide.rules_dir.is_empty() {
+                assert!(
+                    !dir.path().join(format!("{}/{}", ide.rules_dir, ide.rules_filename)).exists(),
+                    "{} 不应安装常驻规则",
+                    ide.id,
+                );
+            }
+
+            // 不管理仓库根 AGENTS.md / CLAUDE.md
+            assert!(
+                !dir.path().join("AGENTS.md").exists(),
+                "{} 不应创建 AGENTS.md",
+                ide.id,
+            );
+            assert!(
+                !dir.path().join("CLAUDE.md").exists(),
+                "{} 不应创建 CLAUDE.md",
+                ide.id,
+            );
+        }
+    }
+
+    /// 旧命令不再落盘（历史硬切回归）。
     #[test]
     fn harness_hard_cut_slash_and_no_gates() {
         let dir = tempdir().unwrap();
@@ -571,31 +554,24 @@ mod tests {
                 "旧斜线命令 {old} 不应再安装",
             );
         }
-        assert!(dir.path().join(".cursor/commands/chunsun.md").is_file());
-        assert!(dir.path().join(".cursor/commands/chunsun-fix.md").is_file());
+        assert!(!dir.path().join(".cursor/commands/chunsun.md").exists());
+        assert!(!dir.path().join(".cursor/commands/chunsun-fix.md").exists());
         assert!(
             !dir.path().join(".cursor/skills/chunsun/references/门禁.md").exists(),
             "门禁引用不应再安装",
         );
         assert!(
-            !dir.path().join(".cursor/skills/chunsun/references/排期确认.md").exists(),
-            "排期引用不应再安装",
-        );
-        assert!(
-            !dir.path().join(".cursor/skills/chunsun/references/stages").exists(),
-            "阶段引用不应再安装",
-        );
-        assert!(
             dir.path().join(".cursor/skills/chunsun/references/loop-rules.md").is_file(),
-            "自主交付核心规则应安装",
+            "核心规则应作为技能引用安装",
         );
     }
 
-    /// 技能从 .agents 迁移到所选 IDE 的 skills 目录，并清理旧 .agents 目录。
+    /// 技能从 .agents 迁移到所选 IDE 的 skills 目录，并清理旧 .agents 布局
+    /// （skills + commands + rules 全部为遗留产物）。
     #[test]
     fn migrates_legacy_agents_to_ide_skills() {
         let dir = tempdir().unwrap();
-        // 模拟旧版布局：.agents/skills/chunsun/ 下装有技能与旧版本号
+        // 模拟旧版布局：.agents/ 下技能、斜线命令、门禁规则俱全
         let legacy_root = dir.path().join(".agents/skills/chunsun");
         fs::create_dir_all(legacy_root.join("references")).unwrap();
         fs::write(legacy_root.join("SKILL.md"), "legacy skill").unwrap();
@@ -604,47 +580,10 @@ mod tests {
             "2026-08-06-harness-long-loop\n",
         )
         .unwrap();
-        assert!(legacy_root.exists());
-
-        // 以 Cursor 为目标重新初始化
-        install_skill_workspace(dir.path(), false, Some(default_ide_target()), &fixture_bundle()).unwrap();
-
-        // 新位置已写入
-        assert!(dir.path().join(".cursor/skills/chunsun/SKILL.md").is_file());
-        assert!(dir.path().join(".cursor/skills/chunsun/.template-version").is_file());
-        // 旧 .agents/skills/chunsun 已被清理
-        assert!(
-            !legacy_root.exists(),
-            "迁移后旧 .agents/skills/chunsun 应被移除",
-        );
-        // 版本号已更新为新版
-        assert_eq!(
-            read_installed_template_version(dir.path()),
-            Some(fixture_version())
-        );
-    }
-
-    /// 旧版整体装在 `.agents` 下（skills + commands + rules）时，迁移后三者均被清理。
-    #[test]
-    fn migrates_legacy_agents_commands_and_rules() {
-        let dir = tempdir().unwrap();
-        // 模拟更早的旧版布局：技能、斜线命令、门禁规则都在 `.agents/` 下
-        let legacy_skill = dir.path().join(".agents/skills/chunsun");
-        fs::create_dir_all(legacy_skill.join("references")).unwrap();
-        fs::write(legacy_skill.join("SKILL.md"), "legacy skill").unwrap();
-        fs::write(
-            legacy_skill.join(TEMPLATE_VERSION_FILENAME),
-            "2026-08-06-harness-long-loop\n",
-        )
-        .unwrap();
-
         let legacy_commands = dir.path().join(".agents/commands");
         fs::create_dir_all(&legacy_commands).unwrap();
         fs::write(legacy_commands.join("chunsun.md"), "legacy cmd").unwrap();
         fs::write(legacy_commands.join("chunsun-fix.md"), "legacy fix").unwrap();
-        // 同目录下若存在非 chunsun 文件，不应被误删
-        fs::write(legacy_commands.join("other-tool.md"), "keep me").unwrap();
-
         let legacy_rules = dir.path().join(".agents/rules");
         fs::create_dir_all(&legacy_rules).unwrap();
         fs::write(
@@ -653,64 +592,151 @@ mod tests {
         )
         .unwrap();
 
-        // 以 CodeBuddy 为目标重新初始化
-        let wb = get_ide_target("codebuddy").expect("codebuddy 应在 IDE 列表中");
-        install_skill_workspace(dir.path(), false, Some(wb), &fixture_bundle()).unwrap();
+        // 以 Cursor 为目标重新初始化
+        install_skill_workspace(dir.path(), false, Some(default_ide_target()), &fixture_bundle())
+            .unwrap();
 
-        // 新位置已写入
-        assert!(dir.path().join(".codebuddy/skills/chunsun/SKILL.md").is_file());
-        assert!(dir.path().join(".codebuddy/commands/chunsun.md").is_file());
-        assert!(dir.path().join(".codebuddy/rules/chunsun-workflow-gates.md").is_file());
-
-        // 旧 .agents 三处 chunsun 产物均被清理
-        assert!(
-            !legacy_skill.exists(),
-            "旧 .agents/skills/chunsun 应被移除",
-        );
-        assert!(
-            !legacy_commands.join("chunsun.md").exists(),
-            "旧 .agents/commands/chunsun.md 应被移除",
-        );
-        assert!(
-            !legacy_commands.join("chunsun-fix.md").exists(),
-            "旧 .agents/commands/chunsun-fix.md 应被移除",
-        );
-        assert!(
-            !legacy_rules.join("chunsun-workflow-gates.md").exists(),
-            "旧 .agents/rules/chunsun-workflow-gates.md 应被移除",
-        );
-        // 非 chunsun 文件保留；目录本身因仍含该文件而保留
-        assert!(
-            legacy_commands.join("other-tool.md").exists(),
-            "非 chunsun 文件不应被误删",
-        );
-        assert!(
-            legacy_commands.exists(),
-            ".agents/commands 因含非 chunsun 文件不应被移除",
-        );
-        // .agents/skills 与 .agents/rules 已清空移除
-        assert!(
-            !dir.path().join(".agents/skills").exists(),
-            "空的 .agents/skills 应被移除",
-        );
-        assert!(
-            !legacy_rules.exists(),
-            "空的 .agents/rules 应被移除",
+        // 新位置已写入，旧 .agents 三处 chunsun 产物均被清理
+        assert!(dir.path().join(".cursor/skills/chunsun/SKILL.md").is_file());
+        assert!(dir.path().join(".cursor/skills/chunsun/.template-version").is_file());
+        assert!(!legacy_root.exists(), "旧 .agents/skills/chunsun 应被移除");
+        assert!(!legacy_commands.join("chunsun.md").exists());
+        assert!(!legacy_commands.join("chunsun-fix.md").exists());
+        assert!(!legacy_rules.join("chunsun-workflow-gates.md").exists());
+        assert!(!dir.path().join(".agents").exists(), ".agents 清空后应整体移除");
+        assert_eq!(
+            read_installed_template_version(dir.path()),
+            Some(fixture_version())
         );
     }
 
-    /// CodeBuddy 目标写入 `.codebuddy/skills/chunsun/` 与 `.codebuddy/commands/`。
+    /// 升级迁移：历史版本装在各 IDE 目录下的斜线命令 / 常驻规则被清理；
+    /// 同目录非 chunsun 文件保留；AGENTS.md / CLAUDE.md 桥接段落剥离、用户内容保留。
     #[test]
-    fn installs_to_codebuddy_skills_dir() {
+    fn legacy_cleanup_removes_commands_rules_and_bridges() {
         let dir = tempdir().unwrap();
-        let wb = get_ide_target("codebuddy").expect("codebuddy 应在 IDE 列表中");
-        install_skill_workspace(dir.path(), false, Some(wb), &fixture_bundle()).unwrap();
-        assert!(dir.path().join(".codebuddy/skills/chunsun/SKILL.md").is_file());
-        assert!(dir.path().join(".codebuddy/skills/chunsun/references/commands.md").is_file());
-        assert!(dir.path().join(".codebuddy/commands/chunsun.md").is_file());
-        assert!(dir.path().join(".codebuddy/commands/chunsun-fix.md").is_file());
-        assert!(dir.path().join(".codebuddy/rules/chunsun-workflow-gates.md").is_file());
-        assert!(!dir.path().join(".agents/skills/chunsun/SKILL.md").exists());
+        let wb = get_ide_target("codebuddy").unwrap();
+
+        // 旧版产物：codebuddy 与 cursor 两套命令 + 规则
+        for (commands_dir, rules_dir, rules_name) in [
+            (".codebuddy/commands", ".codebuddy/rules", "chunsun-workflow-gates.md"),
+            (".cursor/commands", ".cursor/rules", "chunsun-workflow-gates.mdc"),
+        ] {
+            fs::create_dir_all(dir.path().join(commands_dir)).unwrap();
+            fs::write(dir.path().join(format!("{commands_dir}/chunsun.md")), "old").unwrap();
+            fs::write(dir.path().join(format!("{commands_dir}/chunsun-fix.md")), "old").unwrap();
+            fs::write(dir.path().join(format!("{commands_dir}/other-tool.md")), "keep").unwrap();
+            fs::create_dir_all(dir.path().join(rules_dir)).unwrap();
+            fs::write(dir.path().join(format!("{rules_dir}/{rules_name}")), "old").unwrap();
+        }
+
+        // AGENTS.md / CLAUDE.md 带桥接段落与用户内容
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            format!(
+                "# 项目说明\n\n用户自己的内容。\n\n{AGENTS_BRIDGE_BEGIN}\n## 春笋（chunsun）\n旧桥接段落。\n{AGENTS_BRIDGE_END}\n\n## 其它章节\n\n保留我。\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            format!(
+                "# 我的项目\n\n技术栈说明。\n\n{AGENTS_BRIDGE_BEGIN}\n旧段落\n{AGENTS_BRIDGE_END}\n\n## 部署\n\n保留我。\n"
+            ),
+        )
+        .unwrap();
+
+        let result = install_skill_workspace(dir.path(), false, Some(wb), &fixture_bundle()).unwrap();
+
+        // 斜线命令与规则被清理；非 chunsun 文件保留
+        for (commands_dir, rules_dir, rules_name) in [
+            (".codebuddy/commands", ".codebuddy/rules", "chunsun-workflow-gates.md"),
+            (".cursor/commands", ".cursor/rules", "chunsun-workflow-gates.mdc"),
+        ] {
+            assert!(!dir.path().join(format!("{commands_dir}/chunsun.md")).exists());
+            assert!(!dir.path().join(format!("{commands_dir}/chunsun-fix.md")).exists());
+            assert!(dir.path().join(format!("{commands_dir}/other-tool.md")).exists());
+            assert!(!dir.path().join(format!("{rules_dir}/{rules_name}")).exists());
+            // 规则目录清空后移除；命令目录因含非 chunsun 文件保留
+            assert!(!dir.path().join(rules_dir).exists());
+            assert!(dir.path().join(commands_dir).exists());
+        }
+
+        // 桥接段落剥离，marker 前后用户内容保留
+        let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(!agents.contains(AGENTS_BRIDGE_BEGIN));
+        assert!(!agents.contains(AGENTS_BRIDGE_END));
+        assert!(agents.contains("用户自己的内容。"));
+        assert!(agents.contains("保留我。"));
+        assert!(!agents.contains("旧桥接段落。"));
+        let claude = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
+        assert!(claude.contains("技术栈说明。"));
+        assert!(claude.contains("保留我。"));
+        assert!(!claude.contains(AGENTS_BRIDGE_BEGIN));
+
+        // 清理留痕
+        assert!(result.cleaned.iter().any(|p| p == "AGENTS.md"));
+        assert!(result.cleaned.iter().any(|p| p == "CLAUDE.md"));
+        assert!(result
+            .cleaned
+            .iter()
+            .any(|p| p == ".codebuddy/commands/chunsun.md"));
+        assert!(result
+            .cleaned
+            .iter()
+            .any(|p| p == ".cursor/rules/chunsun-workflow-gates.mdc"));
+    }
+
+    /// 桥接清理：文件只剩 chunsun 自动创建的标题壳时，升级后整个文件删除。
+    #[test]
+    fn bridge_only_file_is_deleted_after_cleanup() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            format!("# AGENTS.md\n\n{AGENTS_BRIDGE_BEGIN}\n## 春笋\n旧段落\n{AGENTS_BRIDGE_END}\n"),
+        )
+        .unwrap();
+        install_skill_workspace(dir.path(), false, None, &fixture_bundle()).unwrap();
+        assert!(
+            !dir.path().join("AGENTS.md").exists(),
+            "只剩自动创建壳的 AGENTS.md 应被删除",
+        );
+    }
+
+    /// Agents 目标：技能装在 `.agents/skills`（合法目标，不清理），
+    /// 但 `.agents/commands` / `.agents/rules` 下的 chunsun 旧产物仍被清理。
+    #[test]
+    fn agents_target_keeps_skills_but_cleans_commands_and_rules() {
+        let dir = tempdir().unwrap();
+        let agents = get_ide_target("agents").unwrap();
+
+        // 预置旧产物（模拟更早版本装在 .agents 下）
+        let legacy_commands = dir.path().join(".agents/commands");
+        fs::create_dir_all(&legacy_commands).unwrap();
+        fs::write(legacy_commands.join("chunsun.md"), "legacy cmd").unwrap();
+        let legacy_rules = dir.path().join(".agents/rules");
+        fs::create_dir_all(&legacy_rules).unwrap();
+        fs::write(
+            legacy_rules.join("chunsun-workflow-gates.md"),
+            "legacy gates",
+        )
+        .unwrap();
+
+        install_skill_workspace(dir.path(), false, Some(agents), &fixture_bundle()).unwrap();
+
+        // 技能本体保留（.agents 是本次安装目标）
+        assert!(dir.path().join(".agents/skills/chunsun/SKILL.md").is_file());
+        assert!(dir
+            .path()
+            .join(".agents/skills/chunsun/references/loop-rules.md")
+            .is_file());
+        assert!(dir
+            .path()
+            .join(".agents/skills/chunsun/.template-version")
+            .is_file());
+        // 旧命令与规则仍被清理（不再安装）
+        assert!(!legacy_commands.join("chunsun.md").exists());
+        assert!(!legacy_rules.join("chunsun-workflow-gates.md").exists());
     }
 
     /// 夹具版本须与 backend templates/VERSION 一致（生产走实例接口，不再内嵌常量）。
@@ -718,7 +744,7 @@ mod tests {
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-09-02-dependency-scheduling",
+            "2026-09-08-skill-only-harness",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }
@@ -737,73 +763,13 @@ mod tests {
         );
     }
 
-    /// 各 IDE 的规则文件安装形态：
-    /// - Cursor/Trae/Qoder/CodeBuddy：带 frontmatter 且 alwaysApply: true（否则规则不常驻生效）；
-    ///   Cursor 用 .mdc，其余用 .md。
-    /// - Claude Code：规则**没有 alwaysApply 字段**（官方仅 paths；省略 frontmatter 即全局加载），
-    ///   直接落盘正文，不包裹 Cursor 式 frontmatter。
-    #[test]
-    fn rules_always_apply_frontmatter_per_ide() {
-        for ide in IDE_TARGETS {
-            // WorkBuddy 不安装门禁规则，跳过
-            if !ide.supports_rules {
-                continue;
-            }
-            let files = list_workflow_install_files(ide, &fixture_bundle());
-            let rules_path = format!("{}/{}", ide.rules_dir, ide.rules_filename);
-            let rules = files
-                .iter()
-                .find(|f| f.relative_path == rules_path)
-                .expect("应包含规则文件");
-            if ide.id == IdeId::ClaudeCode {
-                assert!(
-                    !rules.content.starts_with("---\n"),
-                    "{} 规则不应包裹 frontmatter（省略即全局加载）",
-                    ide.id,
-                );
-                assert!(
-                    !rules.content.contains("alwaysApply"),
-                    "{} 规则不应含 alwaysApply（那是 Cursor 的字段）",
-                    ide.id,
-                );
-                assert!(
-                    rules.content.starts_with("# 自主交付核心规则"),
-                    "{} 规则应直接落盘正文",
-                    ide.id,
-                );
-                continue;
-            }
-            assert!(
-                rules.content.starts_with("---\n"),
-                "{} 规则应带 frontmatter",
-                ide.id,
-            );
-            assert!(
-                rules.content.contains("alwaysApply: true"),
-                "{} 规则必须 alwaysApply: true 才常驻",
-                ide.id,
-            );
-        }
-        assert!(get_ide_target("cursor").unwrap().rules_filename.ends_with(".mdc"));
-        for id in ["trae", "qoder", "codebuddy"] {
-            assert!(get_ide_target(id).unwrap().rules_filename.ends_with(".md"));
-        }
-        assert_eq!(
-            get_ide_target("claude-code").unwrap().rules_filename,
-            "chunsun-workflow-gates.md",
-        );
-    }
-
-    /// WorkBuddy 只安装技能到 `.workbuddy/skills`，不安装斜线命令与门禁规则
-    /// （WorkBuddy 不读取 `.workbuddy/commands` 与 `.workbuddy/rules`）；
-    /// AGENTS.md 桥接只指向技能，不指向不存在的规则路径。
+    /// WorkBuddy 只安装技能到 `.workbuddy/skills`（历史上也未装过命令/规则）。
     #[test]
     fn installs_workbuddy_skills_only() {
         let dir = tempdir().unwrap();
         let wb = get_ide_target("workbuddy").expect("workbuddy 应在 IDE 列表中");
         install_skill_workspace(dir.path(), false, Some(wb), &fixture_bundle()).unwrap();
 
-        // 技能（含引用）安装到位
         assert!(dir.path().join(".workbuddy/skills/chunsun/SKILL.md").is_file());
         assert!(dir
             .path()
@@ -813,71 +779,35 @@ mod tests {
             .path()
             .join(".workbuddy/skills/chunsun/references/loop-rules.md")
             .is_file());
-
-        // 不安装斜线命令与门禁规则（WorkBuddy 不支持这两个目录）
-        assert!(!dir.path().join(".workbuddy/commands/chunsun.md").exists());
-        assert!(!dir
-            .path()
-            .join(".workbuddy/commands/chunsun-fix.md")
-            .exists());
-        assert!(!dir
-            .path()
-            .join(".workbuddy/rules/chunsun-workflow-gates.md")
-            .exists());
-
-        // AGENTS.md 桥接只指向技能，不指向不存在的规则路径
-        let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-        assert!(agents.contains(".workbuddy/skills/chunsun/SKILL.md"));
-        assert!(!agents.contains(".workbuddy/rules/chunsun-workflow-gates"));
+        assert!(!dir.path().join(".workbuddy/commands").exists());
+        assert!(!dir.path().join(".workbuddy/rules").exists());
     }
 
-    /// AGENTS.md 桥接：创建、幂等、只替换 marker 内内容、无 marker 时追加。
-    #[test]
-    fn agents_bridge_created_merged_and_idempotent() {
-        let dir = tempdir().unwrap();
-        let wb = get_ide_target("codebuddy").expect("codebuddy 应在 IDE 列表中");
-        install_skill_workspace(dir.path(), false, Some(wb), &fixture_bundle()).unwrap();
-        let agents = dir.path().join("AGENTS.md");
-        let content = fs::read_to_string(&agents).unwrap();
-        assert!(content.contains(AGENTS_BRIDGE_BEGIN));
-        assert!(content.contains(AGENTS_BRIDGE_END));
-        assert!(content.contains(".codebuddy/rules/chunsun-workflow-gates.md"));
-
-        // 幂等：再次安装内容不变，计入 reused
-        let before = content.clone();
-        let again = install_skill_workspace(dir.path(), true, Some(wb), &fixture_bundle()).unwrap();
-        let after = fs::read_to_string(&agents).unwrap();
-        assert_eq!(before, after, "重复安装不应改动 AGENTS.md");
-        assert!(again.reused.iter().any(|p| p == "AGENTS.md"));
-
-        // 用户在 marker 外有内容：只替换 marker 内段落
-        let custom = format!(
-            "# 项目说明\n\n用户自己的内容。\n\n{AGENTS_BRIDGE_BEGIN}\n段落内旧内容\n{AGENTS_BRIDGE_END}\n\n## 其它章节\n\n保留我。\n"
-        );
-        fs::write(&agents, &custom).unwrap();
-        install_skill_workspace(dir.path(), true, Some(wb), &fixture_bundle()).unwrap();
-        let merged = fs::read_to_string(&agents).unwrap();
-        assert!(merged.contains("用户自己的内容。"), "marker 前内容应保留");
-        assert!(merged.contains("保留我。"), "marker 后内容应保留");
-        assert!(!merged.contains("段落内旧内容"), "marker 内旧段落应被替换");
-        assert!(merged.contains(".codebuddy/skills/chunsun/SKILL.md"));
-
-        // 无 marker 的既有 AGENTS.md：追加而非覆盖
-        let dir2 = tempdir().unwrap();
-        fs::write(dir2.path().join("AGENTS.md"), "# 已有 AGENTS\n\n别动我。\n").unwrap();
-        install_skill_workspace(dir2.path(), false, Some(wb), &fixture_bundle()).unwrap();
-        let appended = fs::read_to_string(dir2.path().join("AGENTS.md")).unwrap();
-        assert!(appended.contains("别动我。"), "既有内容应保留");
-        assert!(appended.contains(AGENTS_BRIDGE_BEGIN), "应追加桥接段落");
-    }
-
-    /// Claude Code 目标写入 `.claude/skills`、`.claude/commands`、`.claude/rules`：
-    /// 规则不带 alwaysApply frontmatter（官方省略即全局加载）、斜线命令旧格式仍装、
-    /// 额外在仓库根维护 CLAUDE.md 桥接（官方读 CLAUDE.md 而非 AGENTS.md）。
+    /// Claude Code 目标：技能装 `.claude/skills`，旧 commands/rules 产物清理，
+    /// CLAUDE.md 桥接剥离。
     #[test]
     fn installs_claude_code_target() {
         let dir = tempdir().unwrap();
         let cc = get_ide_target("claude-code").expect("claude-code 应在 IDE 列表中");
+
+        // 预置旧版产物
+        fs::create_dir_all(dir.path().join(".claude/commands")).unwrap();
+        fs::write(dir.path().join(".claude/commands/chunsun.md"), "old").unwrap();
+        fs::write(dir.path().join(".claude/commands/chunsun-fix.md"), "old").unwrap();
+        fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+        fs::write(
+            dir.path().join(".claude/rules/chunsun-workflow-gates.md"),
+            "old gates",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            format!(
+                "# 我的项目\n\n技术栈说明。\n\n{AGENTS_BRIDGE_BEGIN}\n旧段落\n{AGENTS_BRIDGE_END}\n\n## 部署\n\n保留我。\n"
+            ),
+        )
+        .unwrap();
+
         install_skill_workspace(dir.path(), false, Some(cc), &fixture_bundle()).unwrap();
 
         // 技能（含引用）与版本文件
@@ -895,90 +825,40 @@ mod tests {
             .join(".claude/skills/chunsun/.template-version")
             .is_file());
 
-        // 斜线命令（官方：.claude/commands/*.md 旧格式仍有效）
-        assert!(dir.path().join(".claude/commands/chunsun.md").is_file());
-        assert!(dir.path().join(".claude/commands/chunsun-fix.md").is_file());
+        // 旧命令与规则被清理
+        assert!(!dir.path().join(".claude/commands/chunsun.md").exists());
+        assert!(!dir.path().join(".claude/commands/chunsun-fix.md").exists());
+        assert!(!dir.path().join(".claude/rules/chunsun-workflow-gates.md").exists());
+        assert!(!dir.path().join(".claude/commands").exists());
+        assert!(!dir.path().join(".claude/rules").exists());
 
-        // 规则：无 frontmatter（Claude Code 无 alwaysApply，省略即全局加载）
-        let rules =
-            fs::read_to_string(dir.path().join(".claude/rules/chunsun-workflow-gates.md")).unwrap();
-        assert!(!rules.starts_with("---\n"), "Claude Code 规则不应包裹 frontmatter");
-        assert!(!rules.contains("alwaysApply"), "Claude Code 规则不应含 alwaysApply 字段");
-        assert!(rules.starts_with("# 自主交付核心规则"), "规则正文直接落盘");
-
-        // CLAUDE.md 桥接：指向 .claude 路径
+        // CLAUDE.md 桥接剥离、用户内容保留
         let claude = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
-        assert!(claude.contains(AGENTS_BRIDGE_BEGIN));
-        assert!(claude.contains(AGENTS_BRIDGE_END));
-        assert!(claude.contains(".claude/skills/chunsun/SKILL.md"));
-        assert!(claude.contains(".claude/rules/chunsun-workflow-gates.md"));
-
-        // AGENTS.md 桥接仍写（保留给其它 IDE），引用 .claude 路径
-        let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-        assert!(agents.contains(".claude/skills/chunsun/SKILL.md"));
-
-        // 幂等：重复安装 CLAUDE.md 内容不变
-        let before = claude.clone();
-        let again = install_skill_workspace(dir.path(), true, Some(cc), &fixture_bundle()).unwrap();
-        assert_eq!(
-            before,
-            fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap(),
-            "重复安装不应改动 CLAUDE.md",
-        );
-        assert!(again.reused.iter().any(|p| p == "CLAUDE.md"));
+        assert!(claude.contains("技术栈说明。"));
+        assert!(claude.contains("保留我。"));
+        assert!(!claude.contains(AGENTS_BRIDGE_BEGIN));
+        assert!(!claude.contains("旧段落"));
     }
 
-    /// Agents 目标写入 `.agents/skills`、`.agents/commands`、`.agents/rules`，
-    /// 且不会被迁移清理误删（`.agents` 是合法安装目标而非遗留物）。
+    /// 孤立 marker（损坏状态）也能安全剥离。
     #[test]
-    fn installs_agents_target_and_skips_cleanup() {
-        let dir = tempdir().unwrap();
-        let agents = get_ide_target("agents").expect("agents 应在 IDE 列表中");
-        install_skill_workspace(dir.path(), false, Some(agents), &fixture_bundle()).unwrap();
-
-        // 技能（含引用）与版本文件
-        assert!(dir.path().join(".agents/skills/chunsun/SKILL.md").is_file());
-        assert!(dir
-            .path()
-            .join(".agents/skills/chunsun/references/commands.md")
-            .is_file());
-        assert!(dir
-            .path()
-            .join(".agents/skills/chunsun/references/loop-rules.md")
-            .is_file());
-        assert!(dir
-            .path()
-            .join(".agents/skills/chunsun/.template-version")
-            .is_file());
-
-        // 斜线命令与门禁规则
-        assert!(dir.path().join(".agents/commands/chunsun.md").is_file());
-        assert!(dir.path().join(".agents/commands/chunsun-fix.md").is_file());
-        assert!(dir
-            .path()
-            .join(".agents/rules/chunsun-workflow-gates.md")
-            .is_file());
-
-        // AGENTS.md 桥接指向 .agents 路径
-        let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-        assert!(agents_md.contains(".agents/skills/chunsun/SKILL.md"));
-        assert!(agents_md.contains(".agents/rules/chunsun-workflow-gates.md"));
+    fn strip_bridge_handles_orphan_markers() {
+        let content = format!(
+            "# 项目\n\n正文。\n\n{AGENTS_BRIDGE_BEGIN}\n只有开头没有结尾\n\n另一段。\n"
+        );
+        let stripped = strip_bridge_sections(&content);
+        assert!(!stripped.contains(AGENTS_BRIDGE_BEGIN));
+        assert!(stripped.contains("正文。"));
+        assert!(stripped.contains("另一段。"));
     }
 
-    /// Claude Code 的 CLAUDE.md 桥接：用户内容在 marker 外保留、marker 内幂等替换。
+    /// 无桥接段落的 AGENTS.md / CLAUDE.md 完全不动。
     #[test]
-    fn claude_md_bridge_preserves_user_content() {
+    fn untouched_md_files_without_bridge() {
         let dir = tempdir().unwrap();
-        let cc = get_ide_target("claude-code").expect("claude-code 应在 IDE 列表中");
-        let custom = format!(
-            "# 我的项目\n\n技术栈说明。\n\n{AGENTS_BRIDGE_BEGIN}\n旧段落\n{AGENTS_BRIDGE_END}\n\n## 部署\n\n保留我。\n"
-        );
-        fs::write(dir.path().join("CLAUDE.md"), &custom).unwrap();
-        install_skill_workspace(dir.path(), true, Some(cc), &fixture_bundle()).unwrap();
-        let merged = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
-        assert!(merged.contains("技术栈说明。"), "marker 前用户内容应保留");
-        assert!(merged.contains("保留我。"), "marker 后用户内容应保留");
-        assert!(!merged.contains("旧段落"), "marker 内旧段落应被替换");
-        assert!(merged.contains(".claude/skills/chunsun/SKILL.md"));
+        fs::write(dir.path().join("AGENTS.md"), "# 已有 AGENTS\n\n别动我。\n").unwrap();
+        install_skill_workspace(dir.path(), false, None, &fixture_bundle()).unwrap();
+        let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert_eq!(content, "# 已有 AGENTS\n\n别动我。\n");
     }
 }

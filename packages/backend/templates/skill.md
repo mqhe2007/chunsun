@@ -1,12 +1,30 @@
 ---
 name: chunsun
-description: 春笋自主交付工作技能。用户表达「开始/继续/迭代某个需求」「修一个缺陷」等意图时触发。平台 SSOT：需求/轮次/步骤/Memory/场景/用例/缺陷存平台；本地为 .env + 本技能 + 两个斜线命令（/chunsun /chunsun-fix）。自主交付：一次 /chunsun 连续工作到验收绿 / 需用户决策 / 用户打断才停。Trigger on start/continue/iterate a requirement, or fix a defect. Platform SSOT.
-argument-hint: '<requirement-id>'
+description: 春笋自主交付工作技能（唯一 harness 载体）。用户表达「开始/继续/迭代某个需求」「修一个缺陷/派生修复」「查需求缺陷状态」「重做/豁免」等意图时触发，由技能分析意图自动路由。平台 SSOT：需求/轮次/步骤/Memory/场景/用例/缺陷存平台；本地为 .env + 本技能（斜线命令与常驻规则模板已并入技能，不再单独安装）。自主交付：一次触发连续工作到验收绿 / 需用户决策 / 用户打断才停。Trigger on start/continue/iterate a requirement, fix a defect, or query delivery status. Platform SSOT.
+argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 ---
 
 # 春笋自主交付（Harness）
 
-**平台唯一真相源。** 本地保留 `.env`（`CHUNSUN_SECRET_KEY`，可选 `CHUNSUN_API_URL`）、本技能（所选 IDE 的 `skills/chunsun/`）、常驻规则（`<ide>/rules/chunsun-workflow-gates.*`）、两个斜线命令（`<ide>/commands/`）与仓库根桥接段落（`AGENTS.md`；Claude Code 为 `CLAUDE.md`）。
+**平台唯一真相源。** 本地只保留 `.env`（`CHUNSUN_SECRET_KEY`，可选 `CHUNSUN_API_URL`）与**本技能**（所选 IDE 的 `skills/chunsun/`）。技能即全部 harness：交付协议、核心规则（`references/loop-rules.md`）、命令参考（`references/commands.md`）都在技能目录内，不再单独安装斜线命令与常驻规则文件，也不管理仓库根 AGENTS.md。
+
+**核心规则恒生效**：技能激活期间，`references/loop-rules.md`（验收定义 / 停点 / 状态 / 边界）始终优先于任务提示——进入任何交付工作前先读它。
+
+## 意图路由（触发即分析）
+
+用户可能以自然语言或 `/chunsun`、`/chunsun-fix` 等方式调出本技能（各家 Agent 的技能均支持 "/" 调出，历史斜线命令名仍可识别）。触发后**先分析用户输入意图，再路由到对应流程**：
+
+| 用户意图（示例） | 路由 |
+| --- | --- |
+| 开始/继续/迭代需求：「开始需求 3Xl…」「继续上次那个需求」「/chunsun <需求ID>」 | 「自主交付协议」（下文） |
+| 修复缺陷：「修一下缺陷 8Yt…」「这个 bug 处理下」「/chunsun-fix <缺陷ID>」 | 「缺陷修复派生」 |
+| 查询状态：「需求现在什么状态」「缺陷修完了吗」 | `chunsun requirement show` / `chunsun defect` 查询后汇报，不开 Run |
+| 重做/重来：「把登录那块重做」 | `chunsun reset <需求ID>` 后继续循环（见「自然语言动作」） |
+| 豁免：「这个我认了 / 暂不修」 | 场景置 waived + Step 留痕（见「自然语言动作」） |
+| 暂停/停：用户直接打断 | 当前 Step 收尾后置 finished |
+| 无法判断 | `ask_user` 澄清，不要猜 |
+
+带需求 ID / 缺陷 ID 的输入直接进对应流程；只带自然语言描述的，先用 `chunsun requirement list` / `chunsun defect list` 匹配目标，匹配到多个或零个时向用户确认。
 
 ## 宿主选择（自动鉴别，二选一）
 
@@ -47,31 +65,22 @@ argument-hint: '<requirement-id>'
 1. 静默执行 `chunsun update --check`：退出码 0 继续；非 0 提示 `chunsun update` 并结束会话。
 2. `chunsun update` 会在当前仓库自动刷新技能模板（升级或本地模板落后时都会刷）；仅当首次接入仓库、或 `chunsun --help` 仍与本地命令不一致时，才需手动 `chunsun init`。
 
-## 斜线命令（仅 2 个）
-
-| 命令 | 用途 |
-| --- | --- |
-| `/chunsun <需求ID>` | 启动/继续/迭代自主交付 |
-| `/chunsun-fix <缺陷ID>` | 派生唯一修复需求（origin=defect，缺陷 1:1）并进入自主交付 |
-
-无 `/暂停` `/重来`：暂停 = 用户会话内抢话打断；重来 = 用户自然语言说明（"把登录那块重做"），由你判断意图后执行全量重置。
-
 ## 状态机
 
 ```
-需求：pending → running → completed ──再 /chunsun──▶ running（新 Run）
+需求：pending → running → completed ──再触发技能──▶ running（新 Run）
 轮次：running → completed（需求全绿）/ finished（正常收尾，预期下一轮）/ abandoned（放弃，不再推进）
 ```
 
 - `Requirement.status` 是最新轮次的投影：需求状态 = 最新一次连续工作（Run）的状态。从未跑过 = pending。
 - **轮次无「暂停」**：paused 已废弃——轮次不存在恢复（无 resume 命令，finished/abandoned 后不续跑原轮次）。`finished` 表示本轮正常收尾、预期下一轮，投影为需求 running；`abandoned` 表示放弃，需求不再推进（终态）。
-- 每次 `/chunsun` 都开**新轮次**（finished 后不续跑原轮次），轮次是"一次连续工作"的时间切片。
-- 缺陷 1:1 修复需求：修复需求 completed → 缺陷 resolved；复发 = 用户人工把缺陷拉回 open/processing，对**同一需求**再 `/chunsun` 迭代，不派生新需求。
+- 每次技能触发进入交付都开**新轮次**（finished 后不续跑原轮次），轮次是"一次连续工作"的时间切片。
+- 缺陷 1:1 修复需求：修复需求 completed → 缺陷 resolved；复发 = 用户人工把缺陷拉回 open/processing，对**同一需求**再触发技能迭代，不派生新需求。
 
-## 自主交付协议（/chunsun 执行体）
+## 自主交付协议（需求交付执行体）
 
 ```
-/chunsun <需求ID>
+交付 <需求ID>
   1. 拉取上下文：chunsun requirement memory get <ID> + chunsun scenario list <ID> --include-cases
      + 当前 Git 状态 + 环境变量（chunsun env list）
      + 项目知识目录（所有文档元信息，不含正文）：chunsun knowledge index --json
@@ -86,7 +95,7 @@ argument-hint: '<requirement-id>'
         - 不进入执行队列；把阻塞原因与未完成前置列表写入工作记忆
           （requirement memory put <ID> --snapshot '{"dependencySnapshot":{...}}'）
         - chunsun run status <ID> --status finished --reason "被前置任务阻塞：<前置列表>"，停
-        - 向用户展示阻塞原因与前置任务，等待前置完成后再次 /chunsun
+        - 向用户展示阻塞原因与前置任务，等待前置完成后再次触发技能
      c. 未被阻塞才继续执行
   4. 进入循环：
      a. 决策下一步 Step kind（think / code / test / verify / ask_user / info / reflect）
@@ -115,6 +124,22 @@ argument-hint: '<requirement-id>'
 
 **停点只有三种**（验收全绿 / 需用户决策 / 用户打断）与 completed 平台硬条件见 `references/loop-rules.md`「停点」；平台拒绝时返回 COMPLETION_GATE_NOT_MET，不要绕过。
 
+## 缺陷修复派生（缺陷 → 修复需求 1:1）
+
+用户要修缺陷时，把缺陷转成唯一修复需求并进入自主交付：
+
+1. **派生**：`chunsun fix <缺陷ID>`——平台派生修复需求（origin=defect，与缺陷 1:1，缺陷置 processing），并自动启动 Run。
+2. **自主交付**：按上节「自主交付协议」执行（宿主按「宿主选择」鉴别）：
+   - 先明确缺陷根因（think Step）
+   - 修复代码 → 写/跑验证 → upsert 场景/用例回写状态
+   - 执行前依赖检查同样适用：`chunsun dependency blocked defect <缺陷ID>`
+3. **完成**：场景全 passing/waived 且无 open decisions → `chunsun run status <ID> --status completed`，平台自动把缺陷置 resolved；随后 `chunsun dependency unlock defect <缺陷ID>` 检查下游解锁。
+
+规则：
+
+- 一个缺陷只对应一个修复需求；缺陷复发 = 用户人工把缺陷拉回 open，对**同一需求**再触发技能迭代，不要重复派生。
+- 若缺陷其实是新需求（范围变大），改为创建普通需求，不走修复线。
+
 ## 依赖调度（Agent 依赖感知与调度）
 
 本需求交付的核心：Agent 在自主交付时**真正消费 DAG 依赖做调度**，而非只让依赖关系停留在展示层。
@@ -125,7 +150,7 @@ argument-hint: '<requirement-id>'
 - **拓扑排序与调度**：`chunsun dependency schedule` 输出全项目拓扑分层（每层可并行、层间串行）、关键路径、各节点阻塞状态与可执行集合。
   - 可并行推进同层无依赖节点；必须按拓扑顺序串行执行依赖链。
   - 识别关键路径（最长依赖链），优先推进瓶颈任务。
-- **自动解锁**：任务完成（completed）后 `chunsun dependency unlock requirement|defect <ID>` 检查下游：
+- **自动解锁**：任务完成（completed/resolved）后 `chunsun dependency unlock requirement|defect <ID>` 检查下游：
   - 下游所有前置已完成 → 自动解锁，可进入执行；
   - 仍被阻塞（有其他未完成前置）→ 记录仍阻塞原因。
 - **阻塞原因入工作记忆**：被阻塞任务必须在 Memory 的 `dependencySnapshot` 中记录阻塞原因与前置任务列表（验收标准：明确留痕）。
@@ -160,7 +185,7 @@ Agent 通过知识目录感知有哪些 lazy 文档可用，在循环中遇到�
 
 ## 验收定义（passing 的标准）
 
-见 `references/loop-rules.md`「验收定义」——该规则同时以常驻规则安装，始终生效：真实依赖跑通才算 passing、禁 stub / 替身冒充、不得伪造 passed。waived / reset 等操作见下文「自然语言动作」。
+见 `references/loop-rules.md`「验收定义」——该规则随本技能激活恒生效：真实依赖跑通才算 passing、禁 stub / 替身冒充、不得伪造 passed。waived / reset 等操作见下文「自然语言动作」。
 
 ## RRI（评审-反思-改进）
 
@@ -183,7 +208,7 @@ chunsun step add <ID> --run <runId> --kind reflect --summary "评审了什么 / 
 
 - **豁免**：用户说"这个我认了 / 暂不修" → 场景置 waived + Step 留痕。
 - **重来**：用户说"重做 / 重来" → `chunsun reset <ID>`（幂等：清 Memory 工作记忆保留澄清边界 + 场景/用例重置 pending + 开新 Run），继续循环。
-- **暂停/停**：用户直接打断 → 收尾置 finished（`--reason` 说明打断）；继续 = 再 `/chunsun` 开新 Run。
+- **暂停/停**：用户直接打断 → 收尾置 finished（`--reason` 说明打断）；继续 = 再次触发技能开新 Run。
 
 ## 三层边界（编排归属）
 

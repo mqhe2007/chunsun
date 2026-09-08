@@ -219,11 +219,11 @@ export const docCategories: DocCategory[] = [
         slug: "init",
         title: "接入仓库（chunsun init）",
         icon: "link",
-        desc: "绑定仓库，按所选 IDE 安装技能、斜线命令与常驻规则。",
+        desc: "绑定仓库，按所选 IDE 安装春笋技能（唯一 harness 载体）。",
         blocks: [
           {
             t: "p",
-            text: "chunsun init 会在当前仓库完成三件事：校验密钥并绑定仓库、按所选 IDE 安装技能与斜线命令、在仓库根写入跨 IDE 的常驻桥接段落。",
+            text: "chunsun init 会在当前仓库完成两件事：校验密钥并绑定仓库、按所选 IDE 安装春笋技能。技能是唯一的 harness 载体——交付协议、核心规则与命令参考全部在技能目录内，不再单独安装斜线命令与常驻规则文件，也不改动仓库根 AGENTS.md。",
           },
           {
             t: "code",
@@ -237,10 +237,8 @@ export const docCategories: DocCategory[] = [
           {
             t: "ul",
             items: [
-              "Cursor、Trae、Qoder、CodeBuddy：安装技能、斜线命令与常驻规则。",
-              "Claude Code：额外维护 CLAUDE.md 桥接，规则省略 alwaysApply 即全局加载。",
-              "WorkBuddy：仅安装技能。",
-              "Agents：技能、斜线命令与常驻规则统一安装到通用 .agents 目录。",
+              "Cursor、Trae、Qoder、CodeBuddy、Claude Code、WorkBuddy、Agents：安装技能到各自 IDE 目录。",
+              "历史版本装过的斜线命令与常驻规则文件，升级时自动迁移清理。",
             ],
           },
           {
@@ -250,16 +248,14 @@ export const docCategories: DocCategory[] = [
           {
             t: "ul",
             items: [
-              "对应 IDE 目录下的 skills/chunsun/（春笋技能文档）。",
-              "两个斜线命令：/chunsun 与 /chunsun-fix。",
-              "常驻规则：chunsun-workflow-gates（各 IDE 独立 frontmatter）。",
-              "仓库根 AGENTS.md（或 CLAUDE.md）中的桥接段落，作为跨 IDE 常驻层。",
+              "对应 IDE 目录下的 skills/chunsun/（SKILL.md + references 命令参考与核心规则）。",
+              "仅此一处：没有斜线命令文件、没有常驻规则文件、不写 AGENTS.md。",
             ],
           },
           {
             t: "note",
             kind: "info",
-            text: "桥接段落按标记幂等维护：重复执行 init 不会重复叠加，也不会改动你手写的其他内容。",
+            text: "技能触发即分析意图：说「开始需求 <ID>」「修复缺陷 <ID>」或用 /chunsun 调出技能均可，由技能自动路由到交付 / 修复 / 查询流程。",
           },
         ],
       },
@@ -504,11 +500,11 @@ export const docCategories: DocCategory[] = [
         slug: "defect",
         title: "缺陷闭环",
         icon: "bug",
-        desc: "登记缺陷，一条命令派生修复需求，完成即修复。",
+        desc: "登记缺陷，一句话派生修复需求，完成即修复。",
         blocks: [
           {
             t: "p",
-            text: "春笋支持项目级缺陷管理：登记缺陷（标题、描述、严重级别、状态，可关联需求），并可用 /chunsun-fix 一键派生修复需求。",
+            text: "春笋支持项目级缺陷管理：登记缺陷（标题、描述、严重级别、状态，可关联需求），并对缺陷说「修复」即可派生修复需求。",
           },
           {
             t: "h2",
@@ -518,7 +514,7 @@ export const docCategories: DocCategory[] = [
             t: "ol",
             items: [
               "在项目「缺陷」页登记缺陷（或从需求创建）。",
-              "在 Agent 中运行 /chunsun-fix <缺陷ID>，派生唯一的修复需求并进入自主交付。",
+              "在 Agent 中说「修复缺陷 <缺陷ID>」（或用 /chunsun 调出技能说明意图），技能自动派生唯一的修复需求并进入自主交付。",
               "修复需求完成后，缺陷自动置为已解决（resolved）。",
             ],
           },
@@ -528,7 +524,7 @@ export const docCategories: DocCategory[] = [
           },
           {
             t: "p",
-            text: "缺陷复发 = 人工把缺陷拉回未解决状态，再对同一修复需求执行 /chunsun 迭代，不派生新需求。",
+            text: "缺陷复发 = 人工把缺陷拉回未解决状态，再对同一修复需求触发技能迭代，不派生新需求。",
           },
           {
             t: "note",
@@ -632,7 +628,7 @@ export const docCategories: DocCategory[] = [
             items: [
               "进入项目 → 缺陷。",
               "新建缺陷：标题、描述、严重级别（可选关联需求）。",
-              "保存后即可用 /chunsun-fix <缺陷ID> 进入修复。",
+              "保存后即可对缺陷说「修复缺陷 <缺陷ID>」进入修复（技能自动派生修复需求）。",
             ],
           },
           {
@@ -644,7 +640,7 @@ export const docCategories: DocCategory[] = [
             head: ["缺陷状态", "触发"],
             rows: [
               ["open", "登记后"],
-              ["processing", "/chunsun-fix 派生修复需求时"],
+              ["processing", "派生修复需求时（说「修复缺陷」/ chunsun fix）"],
               ["resolved", "修复需求验收完成时自动置位"],
               ["closed", "人工关闭"],
             ],
@@ -800,7 +796,7 @@ export const docCategories: DocCategory[] = [
     key: "reference",
     label: "CLI 参考",
     icon: "keyboard",
-    desc: "chunsun 命令与斜线命令速查。",
+    desc: "chunsun 命令与技能意图路由速查。",
     docs: [
       {
         slug: "commands",
@@ -864,17 +860,23 @@ chunsun update                # 检查并更新 CLI 到最新版本`,
         ],
       },
       {
-        slug: "slash",
-        title: "斜线命令",
+        slug: "skill",
+        title: "技能与意图路由",
         icon: "hash",
-        desc: "/chunsun 与 /chunsun-fix：自主交付的两个入口。",
+        desc: "春笋技能是唯一 harness 入口：触发即分析意图自动路由。",
         blocks: [
           {
+            t: "p",
+            text: "春笋以技能（skills/chunsun/）作为唯一 harness 载体：交付协议、核心规则与命令参考全部在技能目录内。在 Agent 对话中说自然语言，或用 /chunsun 调出技能（各家 Agent 的技能均支持「/」调出），技能会自动分析意图并路由：",
+          },
+          {
             t: "table",
-            head: ["命令", "用途"],
+            head: ["你说（示例）", "技能路由到"],
             rows: [
-              ["/chunsun <需求ID>", "启动 / 继续 / 迭代一条需求的自主交付"],
-              ["/chunsun-fix <缺陷ID>", "派生唯一修复需求（缺陷 1:1）并进入自主交付"],
+              ["「开始需求 <需求ID>」「继续那个需求」", "需求自主交付"],
+              ["「修复缺陷 <缺陷ID>」", "派生唯一修复需求（缺陷 1:1）并自主交付"],
+              ["「需求现在什么状态」", "查询并汇报（不开轮次）"],
+              ["「把登录那块重做」「这个我认了」", "全量重置 / 场景豁免"],
             ],
           },
           {

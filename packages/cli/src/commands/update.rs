@@ -126,6 +126,7 @@ pub fn derive_cli_url_from_api(api_url: &str) -> Result<String, CmdError> {
 fn fetch_instance_version(api_url: &str) -> Result<HealthInfo, CmdError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .user_agent(format!("chunsun-cli/{}", version()))
         .build()
         .map_err(|e| CmdError::new(e.to_string()))?;
     let url = format!("{}/health", api_url.trim().trim_end_matches('/'));
@@ -175,6 +176,7 @@ fn download_to(
 ) -> Result<u64, CmdError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
+        .user_agent(format!("chunsun-cli/{}", version()))
         .build()
         .map_err(|e| CmdError::new(e.to_string()))?;
     let mut res = client
