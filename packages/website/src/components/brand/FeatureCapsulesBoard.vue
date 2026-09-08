@@ -93,7 +93,7 @@ const features: FeaturePoint[] = [
   {
     id: "defect",
     title: "缺陷闭环",
-    line: "/chunsun-fix 派生修复需求并回链缺陷。",
+    line: "一句话派生修复需求并回链缺陷。",
     icon: Bug,
   },
   {
@@ -122,8 +122,8 @@ const features: FeaturePoint[] = [
   },
   {
     id: "slash",
-    title: "斜线极简",
-    line: "仅 /chunsun 与 /chunsun-fix 两条命令。",
+    title: "技能即入口",
+    line: "一个技能承载全部 harness，意图自动路由。",
     icon: Hash,
   },
   {

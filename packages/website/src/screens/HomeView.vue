@@ -508,9 +508,9 @@ onBeforeUnmount(() => {
       <div class="site-rail console-rail" data-reveal>
         <header class="console-head">
           <p class="eyebrow">跨时空续跑</p>
-          <h2 id="console-title" class="section-title">一条斜线命令，自主推进</h2>
+          <h2 id="console-title" class="section-title">一个技能，意图自动路由</h2>
           <p class="section-lead">
-            Agent 连续决策与验收，直到场景全绿。
+            说句话，技能自动分析意图并自主推进，直到场景全绿。
           </p>
         </header>
 

@@ -40,7 +40,5 @@ mod tests {
         let data = template_payload();
         assert_eq!(data["templateVersion"].as_str(), Some(TEMPLATE_VERSION));
         assert!(data["files"]["SKILL.md"].as_str().unwrap().contains("春笋"));
-        assert!(data["files"]["slash/chunsun.md"].as_str().is_some());
-        assert!(data["files"]["slash/chunsun-fix.md"].as_str().is_some());
     }
 }
