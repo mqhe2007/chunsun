@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "chunsun"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "pem-rfc7468"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
 dependencies = [

@@ -180,7 +180,7 @@ onMounted(fetchContexts);
 </script>
 
 <template>
-  <AppPage title="知识">
+  <AppPage title="知识库">
     <template #actions>
       <button
         type="button"

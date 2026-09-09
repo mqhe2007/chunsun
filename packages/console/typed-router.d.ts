@@ -142,6 +142,7 @@ declare module 'vue-router/auto-routes' {
       | '/projects/[id]/'
       | '/projects/[id]/defects/'
       | '/projects/[id]/dependencies'
+      | '/projects/[id]/knowledge'
       | '/projects/[id]/overview'
       | '/projects/[id]/requirements/'
       | '/projects/[id]/requirements/[requirementId]'
@@ -168,6 +169,13 @@ declare module 'vue-router/auto-routes' {
     '/projects/[id]/dependencies': RouteRecordInfo<
       '/projects/[id]/dependencies',
       '/projects/:id/dependencies',
+      { id: ParamValue<true> },
+      { id: ParamValue<false> },
+      | never
+    >,
+    '/projects/[id]/knowledge': RouteRecordInfo<
+      '/projects/[id]/knowledge',
+      '/projects/:id/knowledge',
       { id: ParamValue<true> },
       { id: ParamValue<false> },
       | never
@@ -393,6 +401,7 @@ declare module 'vue-router/auto-routes' {
         | '/projects/[id]/'
         | '/projects/[id]/defects/'
         | '/projects/[id]/dependencies'
+        | '/projects/[id]/knowledge'
         | '/projects/[id]/overview'
         | '/projects/[id]/requirements/'
         | '/projects/[id]/requirements/[requirementId]'
@@ -425,6 +434,14 @@ declare module 'vue-router/auto-routes' {
     'src/pages/projects/[id]/dependencies.vue': {
       routes:
         | '/projects/[id]/dependencies'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/pages/projects/[id]/knowledge.vue': {
+      routes:
+        | '/projects/[id]/knowledge'
       views:
         | never
       pathParamNames:

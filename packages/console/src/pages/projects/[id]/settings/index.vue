@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import KnowledgeConfigView from "@/screens/projects/knowledge/KnowledgeConfigView.vue";
+import GeneralSettingsView from "@/screens/projects/settings/GeneralSettingsView.vue";
 
 definePage({
   meta: { title: "项目设置" },
@@ -7,5 +7,5 @@ definePage({
 </script>
 
 <template>
-  <KnowledgeConfigView />
+  <GeneralSettingsView />
 </template>

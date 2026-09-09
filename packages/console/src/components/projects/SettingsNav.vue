@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { BookOpen, Key, Settings, SlidersHorizontal, Users } from "@lucide/vue";
+import { Key, Settings, SlidersHorizontal, Users } from "@lucide/vue";
 import ProjectMegaNav, { type MegaNavItem } from "@/components/projects/ProjectMegaNav.vue";
 
 const props = defineProps<{
@@ -13,8 +13,7 @@ const route = useRoute();
 const items = computed<MegaNavItem[]>(() => {
   const base = `/projects/${props.projectId}/settings`;
   return [
-    { key: "", label: "知识设置", icon: BookOpen, to: base },
-    { key: "general", label: "通用设置", icon: Settings, to: `${base}/general` },
+    { key: "", label: "通用设置", icon: Settings, to: base },
     { key: "members", label: "成员管理", icon: Users, to: `${base}/members` },
     { key: "secret-key", label: "项目密钥", icon: Key, to: `${base}/secret-key` },
     { key: "env-vars", label: "环境变量", icon: SlidersHorizontal, to: `${base}/env-vars` },
