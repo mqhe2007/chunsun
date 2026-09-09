@@ -1,6 +1,6 @@
 [package]
 name = "chunsun"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2021"
 description = "春笋平台：控制台 + API + CLI 分发"
 publish = false
