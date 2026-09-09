@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use crate::api::{AppError, ApiResponse};
 use crate::auth::{AuthSession, CurrentUser};
 use crate::core::js_number::prisma_int;
+use crate::core::memory::validate_memory_snapshot;
 use crate::core::serde_ext::double_option;
 use crate::routes::validate::validation_error;
 use crate::repos::harness::{
@@ -99,35 +100,13 @@ struct StepBody {
     artifacts: Option<Value>,
 }
 
-// 工作记忆 snapshot 为 Markdown 文本（2026-09-09 起从 JSON 五字段改为自由 Markdown）。
-// 三态保留（显式 null = 落 NULL），但「字段缺失」不再静默退化——put_memory
-// 处理器直接 400 SNAPSHOT_REQUIRED（缺失即调用方 bug，静默回旧行会误诊为已写入）。
+/// 工作记忆 snapshot 为 Markdown 文本（2026-09-09 起从 JSON 五字段改为自由 Markdown）。
+/// 三态保留（显式 null = 落 NULL），但「字段缺失」不再静默退化——put_memory
+/// 处理器直接 400 SNAPSHOT_REQUIRED（缺失即调用方 bug，静默回旧行会误诊为已写入）。
 #[derive(Debug, Deserialize)]
 struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
     snapshot: Option<Option<String>>,
-}
-
-/// 工作记忆 snapshot 粒度上限（字符数）：协议约定整体 ~20k 字符内，超出拒绝写入。
-const MEMORY_SNAPSHOT_MAX_CHARS: usize = 20_000;
-
-/// 校验 PUT memory 的 snapshot 三态，通过则返回可下传仓储层的值：
-/// - 字段缺失 → 400 SNAPSHOT_REQUIRED（缺失即调用方 bug；旧行为静默回旧行返 200，
-///   会让调用方误以为已写入，是「工作记忆没生效」类缺陷的温床）
-/// - 显式 null → 放行（落 NULL，清空记忆）
-/// - 超 20k 字符 → 400 MEMORY_TOO_LARGE（Memory 是唯一进 prompt 的工作记忆，粒度严控）
-fn validate_memory_snapshot(
-    snapshot: &Option<Option<String>>,
-) -> Result<Option<&str>, AppError> {
-    let Some(value) = snapshot.as_ref().map(|v| v.as_ref()) else {
-        return Err(AppError::bad_request("SNAPSHOT_REQUIRED"));
-    };
-    if let Some(v) = value {
-        if v.chars().count() > MEMORY_SNAPSHOT_MAX_CHARS {
-            return Err(AppError::bad_request("MEMORY_TOO_LARGE"));
-        }
-    }
-    Ok(value.map(|x| x.as_str()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -886,28 +865,6 @@ mod tests {
         // 有值（自由 Markdown 文本）→ 全量覆盖（不是合并）
         let b: MemoryBody = serde_json::from_str("{\"snapshot\":\"# 需求边界\"}").unwrap();
         assert_eq!(b.snapshot, Some(Some("# 需求边界".to_string())));
-    }
-
-    #[test]
-    fn memory_snapshot_validation_rejects_missing_and_oversize() {
-        // 缺失 → SNAPSHOT_REQUIRED（不再静默回旧行）
-        let err = validate_memory_snapshot(&None).unwrap_err();
-        assert_eq!(err.code, "SNAPSHOT_REQUIRED");
-        // 显式 null → 放行
-        assert_eq!(validate_memory_snapshot(&Some(None)).unwrap(), None);
-        // 正常值 → 放行
-        let v = "## 本轮总结\n- 做了什么".to_string();
-        assert_eq!(
-            validate_memory_snapshot(&Some(Some(v.clone()))).unwrap(),
-            Some(v.as_str())
-        );
-        // 超 20k 字符 → MEMORY_TOO_LARGE
-        let big = "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS + 1);
-        let err = validate_memory_snapshot(&Some(Some(big))).unwrap_err();
-        assert_eq!(err.code, "MEMORY_TOO_LARGE");
-        // 恰好贴边（≤ 上限）→ 放行
-        let edge = "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS);
-        assert!(validate_memory_snapshot(&Some(Some(edge))).is_ok());
     }
 
     #[test]

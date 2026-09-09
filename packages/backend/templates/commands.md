@@ -39,17 +39,19 @@ chunsun case status <需求ID> <用例ID> <passed|failed|blocked|skipped> [--res
 
 场景/用例唯一真相在平台表；`waived` 只能由用户自然语言豁免触发并留痕。
 
-## chunsun knowledge / requirement memory / reset / fix
+## chunsun knowledge / requirement memory / project memory / reset / fix
 
 ```bash
 chunsun knowledge [--json]                                      # 项目知识概览（宪法+自定义文档+需求/环境变量统计）
 chunsun requirement memory get <需求ID>                          # 拉取需求工作记忆
-chunsun requirement memory put <需求ID> --snapshot '{"lastRunSummary":{...}}'  # 增量写回（顶层 key 合并）
+chunsun requirement memory put <需求ID> --snapshot '<Markdown>'  # 全量覆盖写回需求工作记忆（≤10k 字符）
+chunsun memory get [--json]                                     # 拉取项目级记忆（跨需求填坑/经验，无则友好提示）
+chunsun memory put --snapshot '<Markdown>' [--json]             # 全量覆盖写回项目级记忆（≤10k 字符，仅可编辑不可删除）
 chunsun reset <需求ID>                                           # 全量重置：清工作记忆（保留澄清边界）+ 场景/用例重置 pending + 开新 Run
 chunsun fix <缺陷ID>                                             # 派生唯一修复需求（缺陷 1:1）并启动自主交付
 ```
 
-`put` 会先读已有 snapshot，再按顶层 key 合并后写入；缺省 Memory 时从空对象开始。
+`put` 为**全量覆盖**写回（snapshot 是完整 Markdown 文本）；缺省 Memory 时从空开始建行。
 `get` 在尚无 Memory 时友好提示并退出 0（`--json` 返回 `{"exists":false}`）。
 
 ## chunsun dependency（Agent 依赖感知与调度）

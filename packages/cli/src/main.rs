@@ -53,6 +53,8 @@ enum Commands {
     Update(commands::update::UpdateArgs),
     /// 项目知识概览（项目宪法+自定义文档+需求/环境变量统计）
     Knowledge(commands::knowledge::KnowledgeArgs),
+    /// 项目级记忆（跨需求复用的填坑/经验/沉淀，属于项目知识库之一，仅可编辑不可删除）
+    Memory(commands::memory::MemoryArgs),
     /// （内部）刷新当前仓库的春笋技能模板
     #[command(name = "_refresh-templates", hide = true)]
     RefreshTemplates,
@@ -97,6 +99,7 @@ fn main() -> ExitCode {
         Some(Commands::Fix(args)) => commands::harness::run_fix(args),
         Some(Commands::Update(args)) => commands::update::run(args),
         Some(Commands::Knowledge(args)) => commands::knowledge::run(args),
+        Some(Commands::Memory(args)) => commands::memory::run(args),
         Some(Commands::RefreshTemplates) => commands::update::run_refresh_templates(),
     };
 

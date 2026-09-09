@@ -14,6 +14,8 @@ import { api } from "@/utils/api";
 
 const CONSTITUTION_KEY = "constitution";
 const CONSTITUTION_TITLE = "项目宪法";
+const MEMORY_KEY = "memory";
+const MEMORY_TITLE = "项目记忆";
 
 type ContextItem = {
   key: string;
@@ -56,9 +58,16 @@ const isEditingConstitution = computed(
   () => editingKey.value === CONSTITUTION_KEY,
 );
 
+const isEditingMemory = computed(() => editingKey.value === MEMORY_KEY);
+
+const isEditingSystemItem = computed(
+  () => isEditingConstitution.value || isEditingMemory.value,
+);
+
 const dialogHeader = computed(() => {
   if (editingKey.value === null) return "添加文档";
   if (isEditingConstitution.value) return "编辑项目宪法";
+  if (isEditingMemory.value) return "编辑项目记忆";
   return "编辑文档";
 });
 
@@ -74,8 +83,15 @@ const rows = computed<ContextRow[]>(() =>
 function applyPayload(data: ContextsPayload) {
   const list = data.contexts ?? [];
   const constitution = list.find(c => c.key === CONSTITUTION_KEY);
-  const customs = list.filter(c => c.key !== CONSTITUTION_KEY);
-  contexts.value = constitution ? [constitution, ...customs] : customs;
+  const memory = list.find(c => c.key === MEMORY_KEY);
+  const customs = list.filter(
+    c => c.key !== CONSTITUTION_KEY && c.key !== MEMORY_KEY,
+  );
+  contexts.value = [
+    ...(constitution ? [constitution] : []),
+    ...(memory ? [memory] : []),
+    ...customs,
+  ];
 }
 
 async function fetchContexts() {
@@ -106,18 +122,26 @@ function openCreate() {
 
 function openEdit(row: ContextRow) {
   editingKey.value = row.key;
-  formTitle.value = row.system ? CONSTITUTION_TITLE : row.title;
+  if (row.key === CONSTITUTION_KEY) {
+    formTitle.value = CONSTITUTION_TITLE;
+  } else if (row.key === MEMORY_KEY) {
+    formTitle.value = MEMORY_TITLE;
+  } else {
+    formTitle.value = row.title;
+  }
   formContent.value = row.content;
   formLoadStrategy.value = (row.loadStrategy as "eager" | "lazy") || "eager";
   dialogOpen.value = true;
 }
 
 async function saveDoc() {
-  const title = isEditingConstitution.value
-    ? CONSTITUTION_TITLE
+  const title = isEditingSystemItem.value
+    ? isEditingConstitution.value
+      ? CONSTITUTION_TITLE
+      : MEMORY_TITLE
     : formTitle.value.trim();
 
-  if (!isEditingConstitution.value && !title) {
+  if (!isEditingSystemItem.value && !title) {
     toast.warn("请填写标题");
     return;
   }
@@ -136,6 +160,12 @@ async function saveDoc() {
         { content: formContent.value },
       );
       if (!res.data.success) throw new Error("constitution update failed");
+    } else if (isEditingMemory.value) {
+      const res = await api.put<{ success: boolean }>(
+        `/projects/${projectId()}/memory`,
+        { snapshot: formContent.value },
+      );
+      if (!res.data.success) throw new Error("memory update failed");
     } else {
       const res = await api.put<{ success: boolean }>(
         `/projects/${projectId()}/knowledge/documents/${editingKey.value}`,
@@ -261,16 +291,21 @@ onMounted(fetchContexts);
             type="text"
             class="input w-full"
             maxlength="200"
-            :disabled="isEditingConstitution"
+            :disabled="isEditingSystemItem"
             :placeholder="
-              isEditingConstitution
-                ? CONSTITUTION_TITLE
+              isEditingSystemItem
+                ? isEditingConstitution
+                  ? CONSTITUTION_TITLE
+                  : MEMORY_TITLE
                 : '例如：编码规范、命名约定'
             "
           />
         </AppField>
         <p v-if="isEditingConstitution" class="hint text-base-content/60">
           项目宪法为系统固定项，标题不可更改、不可删除。
+        </p>
+        <p v-else-if="isEditingMemory" class="hint text-base-content/60">
+          项目记忆沉淀跨需求的填坑与经验，为系统固定项，标题不可更改、不可删除。
         </p>
         <AppField label="正文" html-for="ctx-content">
           <textarea
@@ -281,11 +316,13 @@ onMounted(fetchContexts);
             :placeholder="
               isEditingConstitution
                 ? '# 项目宪法\n\n## 核心原则\n- …\n\n## 技术约束\n- …'
-                : 'Markdown 正文…'
+                : isEditingMemory
+                  ? '## 填坑记录\n- …\n\n## 经验沉淀\n- …'
+                  : 'Markdown 正文…'
             "
           />
         </AppField>
-        <AppField v-if="!isEditingConstitution" label="加载策略" html-for="ctx-strategy">
+        <AppField v-if="!isEditingSystemItem" label="加载策略" html-for="ctx-strategy">
           <select
             id="ctx-strategy"
             v-model="formLoadStrategy"

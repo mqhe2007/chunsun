@@ -7,6 +7,7 @@ pub mod env;
 pub mod harness;
 pub mod init;
 pub mod knowledge;
+pub mod memory;
 pub mod repo;
 pub mod requirement;
 pub mod update;
