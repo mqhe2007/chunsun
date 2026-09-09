@@ -46,6 +46,8 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ⑤skill.md 新增「项目记忆」节（存储/命令/容量/记录时机/边界），loop-rules.md 与 commands.md 同步；
 > ⑥console 知识页像宪法一样展示项目记忆（可编辑、不可删除）。
 >
+> 2026-09-09-memory-writing-rules：skill.md「项目记忆」节新增「撰写规则」——不强制章节模板，但明确写什么（跨需求复用且代码读不出来的硬约束/决策理由/根因+解法）、不写什么（单需求过程、grep 可知事实、长篇参考、流水账）、怎么写（一条一行、精确可执行、按主题聚类）、过时即删（旧结论删除只留一句极短演进记录，不做只追加日志）。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选
