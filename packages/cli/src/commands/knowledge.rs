@@ -222,5 +222,6 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
     println!("知识目录（元信息，不含正文）：chunsun knowledge index");
     println!("单条查询：chunsun knowledge doc <docId|constitution>");
     println!("需求工作记忆：chunsun requirement memory get|put <需求ID>");
+    println!("项目级记忆：chunsun memory get|put");
     Ok(())
 }

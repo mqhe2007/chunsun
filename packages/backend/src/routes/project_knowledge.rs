@@ -89,7 +89,8 @@ fn is_admin(session: &crate::auth::AuthSession) -> bool {
     session.user.role == "ADMIN"
 }
 
-async fn visible(
+/// 项目可见性校验：成员或管理员可见（知识库 / 项目记忆等共享）。
+pub(crate) async fn visible(
     state: &AppState,
     session: &crate::auth::AuthSession,
     project_id: &str,
@@ -294,11 +295,18 @@ async fn get_knowledge_index(
     let pid = visible(&state, &session, &project_id).await?;
     let docs = ctx_repo::list_knowledge_documents(&state.pool(), &pid, None).await?;
 
-    let mut items = Vec::with_capacity(docs.len() + 1);
+    let mut items = Vec::with_capacity(docs.len() + 2);
     // 宪法恒为 eager，固定包含
     items.push(json!({
         "key": "constitution",
         "title": "项目宪法",
+        "system": true,
+        "loadStrategy": "eager",
+    }));
+    // 项目记忆恒为 eager，固定包含（属于项目知识库之一，仅可编辑不可删除）
+    items.push(json!({
+        "key": "memory",
+        "title": "项目记忆",
         "system": true,
         "loadStrategy": "eager",
     }));

@@ -16,6 +16,7 @@ pub mod project;
 pub mod project_knowledge;
 pub mod project_env_var;
 pub mod project_member;
+pub mod project_memory;
 pub mod project_secret_key;
 pub mod repository;
 pub mod system_setting;

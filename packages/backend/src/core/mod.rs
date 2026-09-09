@@ -6,6 +6,7 @@ pub mod dependency_graph;
 pub mod env_var_crypto;
 pub mod ids;
 pub mod js_number;
+pub mod memory;
 pub mod password;
 pub mod pct;
 pub mod permission_policy;

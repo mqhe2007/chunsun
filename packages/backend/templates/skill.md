@@ -83,9 +83,11 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 交付 <需求ID>
   1. 拉取上下文：chunsun requirement memory get <ID> + chunsun scenario list <ID> --include-cases
      + 当前 Git 状态 + 环境变量（chunsun env list）
-     + 项目知识目录（所有文档元信息，不含正文）：chunsun knowledge index --json
-     + 项目知识（仅 eager 文档正文）：chunsun knowledge --strategy eager --json
+     + 项目知识目录（所有文档元信息，不含正文）：chunsun knowledge index
+     + 项目知识（仅 eager 文档正文，含宪法与项目记忆）：chunsun knowledge --strategy eager --json
      （知识目录用于感知有哪些 lazy 文档可按需拉取；lazy 文档正文不在启动时加载）
+     （项目记忆 = 跨需求填坑/经验/沉淀，属知识库成员，随 eager 加载进 prompt；
+       单独查看/审计用 chunsun memory get）
   2. 开新 Run：chunsun run start <ID>
      - 若报已有 Run 在跑（撞锁）：向用户展示最后活跃时间，用户确认后
        chunsun run takeover <ID>（僵尸 Run 人工接管），再 start
@@ -206,7 +208,20 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 4. **每轮 Run 收尾（completed / finished）前** → 必须写「## 本轮总结」：做了什么 / 关键决策与理由 / 结果 / 下一步建议。不写则断点不可续。
 5. **声称即写入**：在回复里说「已写入工作记忆」必须真的调用过 `memory put`——只在文字里声称等同没写。`chunsun run remind` 会检查本轮 Run 是否写过记忆，未写会在进下一轮 prompt 前提醒。
 
-**粒度严控**（整体 ~20k 字符内，超限平台拒绝写入 `MEMORY_TOO_LARGE`）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。接近上限时主动精简旧内容（如把旧的本轮总结压缩为一句话）。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+**粒度严控**（整体 ~10k 字符内，超限平台拒绝写入 `MEMORY_TOO_LARGE`）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。接近上限时主动精简旧内容（如把旧的本轮总结压缩为一句话）。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+
+## 项目记忆（项目级，跨需求沉淀）
+
+需求级「工作记忆」管**单个需求**的断点续跑；**项目级记忆**管**跨需求复用**的填坑、经验、沉淀——一次踩坑、一个决策、一条规范，值得其他需求也看到时，记进项目记忆。
+
+- **存储**：每项目一份（1:1），自由 Markdown 文本；属于项目知识库之一（`chunsun knowledge index` 固定展示 `key=memory` 的 system 条目，恒 eager）；**仅可编辑不可删除**（无删除端点）。
+- **命令**：`chunsun memory get`（拉取 / 审计，含 `--json`）/ `chunsun memory put --snapshot '<完整 Markdown>'`（全量覆盖写回）。
+- **容量**：与需求工作记忆统一，上限 10k 字符（超限平台拒绝 `MEMORY_TOO_LARGE`；接近上限主动精简旧条目，如把早期条目压缩为一行）。
+- **记录时机**（柔性约束，遇以下情形随手沉淀，不用等收尾）：
+  1. 循环中踩坑 / 发现可复用经验 → 随手 append 一条（`## 填坑记录` / `## 经验沉淀` 等章节）；
+  2. RRI（评审-反思-改进）环节识别出的项目级经验；
+  3. 每个 Run 收尾写「## 本轮总结」前，把本轮的项目级经验并入项目记忆。
+- **边界**：需求记忆 = 单需求断点续跑必需；项目记忆 = 跨需求复用；场景/用例唯一真相仍在平台表，二者都不存镜像。写项目记忆走「拉取-修改-保存」（`memory get` → 本地改 → `put` 全量覆盖），不要只 append 不读旧内容。
 
 ## Knowledge（项目知识，按需渐进式披露）
 
@@ -264,6 +279,7 @@ chunsun step add <需求ID> --run <runId> --kind <think|code|test|verify|ask_use
 chunsun scenario list|upsert|status
 chunsun case list|upsert|status
 chunsun requirement memory get|put <需求ID>
+chunsun memory get|put                                     # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）
 chunsun dependency list|schedule                                  # 依赖边 / 全项目调度分析
 chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
 chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析

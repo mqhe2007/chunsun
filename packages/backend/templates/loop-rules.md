@@ -31,7 +31,13 @@
 - 写入走「拉取-修改-保存」全流程：`memory get` → 本地修改 → `memory put --snapshot '<完整 Markdown>'` 全量覆盖。
 - 「声称即写入」：说「已写入工作记忆」必须真的调用过 `memory put`，只在回复里声称等同没写。
 - 每轮 Run 收尾（completed / finished）前必须写「## 本轮总结」；`chunsun run remind` 会检查本轮是否写过记忆并提醒。
-- snapshot 整体 ≤ 20k 字符，超限平台拒绝（`MEMORY_TOO_LARGE`）；PUT 缺 `snapshot` 字段平台拒绝（`SNAPSHOT_REQUIRED`）。接近上限时主动精简旧内容。
+- snapshot 整体 ≤ 10k 字符，超限平台拒绝（`MEMORY_TOO_LARGE`）；PUT 缺 `snapshot` 字段平台拒绝（`SNAPSHOT_REQUIRED`）。接近上限时主动精简旧内容。
+
+## 项目记忆
+
+- 项目级记忆（跨需求填坑/经验/沉淀）是项目知识库成员（`key=memory`，恒 eager），**仅可编辑不可删除**（无删除端点）。
+- 记录时机（柔性约束）：循环中踩坑随手记、RRI 识别、Run 收尾写本轮总结前并入项目级经验（`chunsun memory put`）。
+- 容量与需求工作记忆一致（10k 字符），接近上限主动精简；写入走「拉取-修改-保存」全量覆盖。
 
 ## RRI（评审-反思-改进）
 

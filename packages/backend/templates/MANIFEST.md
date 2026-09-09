@@ -38,6 +38,14 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ④console 面板从五区块结构化渲染改为 markdown-it 单区块渲染（XSS 防护：html:false）；
 > ⑤skill.md「Memory」节重写为 Markdown 模板（需求边界/待决策/代码标记/环境变量/阻塞原因/本轮总结），loop-rules.md 同步更新。
 >
+> 2026-09-09-project-memory：新增项目级记忆机制（需求 aKek1T5nctZQ）——
+> ①后端新增 `project_memory` 表（1:1 每项目一份）+ `GET/PUT /projects/{projectId}/memory`（无 DELETE，仅可编辑不可删除）；
+> ②记忆容量上限统一调整为 10k 字符（需求工作记忆同改），校验上移至 `core::memory` 共用；
+> ③项目记忆属知识库成员：`knowledge index` 固定 `key=memory` system 条目，知识概览/列表恒 eager 展示；
+> ④CLI 新增顶层 `chunsun memory get|put`；
+> ⑤skill.md 新增「项目记忆」节（存储/命令/容量/记录时机/边界），loop-rules.md 与 commands.md 同步；
+> ⑥console 知识页像宪法一样展示项目记忆（可编辑、不可删除）。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选
