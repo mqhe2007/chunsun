@@ -628,6 +628,7 @@ async fn patch_scenario_status(
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     ensure_enum("status", &body.status, SCENARIO_STATUSES)?;
     check_project(&state, &p.project_id, &session).await?;
+    // scenarioId 路径参数兼容内部 ID 或 key（仓储层 id 优先、key 兜底查找）。
     let row =
         set_scenario_status(&state.pool(), &p.scenario_id, &p.requirement_id, &body.status).await?;
     let Some(row) = row else {
@@ -879,15 +880,12 @@ mod tests {
         // 缺失 → 反序列化为 None（put_memory 处 400 SNAPSHOT_REQUIRED）
         let b: MemoryBody = serde_json::from_str("{}").unwrap();
         assert_eq!(b.snapshot, None);
-        // 显式 null → 落 jsonb 'null'（列非空，不是 SQL NULL）
+        // 显式 null → 落 TEXT NULL（列非空，不是 SQL NULL）
         let b: MemoryBody = serde_json::from_str(r#"{"snapshot":null}"#).unwrap();
         assert_eq!(b.snapshot, Some(None));
-        // 有值 → 全量覆盖（不是合并）
-        let b: MemoryBody = serde_json::from_str(r#"{"snapshot":{"a":1}}"#).unwrap();
-        assert_eq!(b.snapshot, Some(Some(serde_json::json!({"a": 1}))));
-        // t.Any() 不限类型：标量 / 数组同样合法
-        let b: MemoryBody = serde_json::from_str(r#"{"snapshot":"s"}"#).unwrap();
-        assert_eq!(b.snapshot, Some(Some(Value::String("s".into()))));
+        // 有值（自由 Markdown 文本）→ 全量覆盖（不是合并）
+        let b: MemoryBody = serde_json::from_str("{\"snapshot\":\"# 需求边界\"}").unwrap();
+        assert_eq!(b.snapshot, Some(Some("# 需求边界".to_string())));
     }
 
     #[test]
@@ -898,17 +896,17 @@ mod tests {
         // 显式 null → 放行
         assert_eq!(validate_memory_snapshot(&Some(None)).unwrap(), None);
         // 正常值 → 放行
-        let v = serde_json::json!({"lastRunSummary": {"note": "x"}});
+        let v = "## 本轮总结\n- 做了什么".to_string();
         assert_eq!(
             validate_memory_snapshot(&Some(Some(v.clone()))).unwrap(),
-            Some(&v)
+            Some(v.as_str())
         );
         // 超 20k 字符 → MEMORY_TOO_LARGE
-        let big = serde_json::json!({"blob": "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS)});
+        let big = "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS + 1);
         let err = validate_memory_snapshot(&Some(Some(big))).unwrap_err();
         assert_eq!(err.code, "MEMORY_TOO_LARGE");
-        // 恰好贴边（序列化后 ≤ 上限）→ 放行
-        let edge = serde_json::json!({"blob": "x".repeat(100)});
+        // 恰好贴边（≤ 上限）→ 放行
+        let edge = "x".repeat(MEMORY_SNAPSHOT_MAX_CHARS);
         assert!(validate_memory_snapshot(&Some(Some(edge))).is_ok());
     }
 
