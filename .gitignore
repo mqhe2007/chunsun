@@ -17,6 +17,8 @@ backups/
 /.env
 /.env.development
 /.env.production
+/.env.test
+/.env.local
 
 # 平台实例配置（安装向导写入）
 chunsun.json

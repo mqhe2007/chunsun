@@ -44,10 +44,38 @@ enum Boot {
     Setup { port: u16 },
 }
 
+/// 仅 debug 读取仓库环境文件，方便本地开发；发布二进制不以 dotenv 为产品面。
+/// 加载链与 CLI（runtime_env.rs）语义一致，先加载者优先（dotenvy 不覆盖已有环境变量）：
+///   CHUNSUN_ENV_FILE（显式指定）> .env.local > .env.{env}.local > .env.{env} > .env
+/// 环境判定：CHUNSUN_ENV > NODE_ENV > 缺省 development（debug 构建即本地开发/测试场景）。
+#[cfg(debug_assertions)]
+fn load_local_env_files() {
+    if let Ok(explicit) = std::env::var("CHUNSUN_ENV_FILE") {
+        if !explicit.trim().is_empty() {
+            let _ = dotenvy::from_path(explicit);
+            return;
+        }
+    }
+
+    let env = std::env::var("CHUNSUN_ENV")
+        .or_else(|_| std::env::var("NODE_ENV"))
+        .ok()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "development".into());
+
+    let env_local = format!(".env.{env}.local");
+    let env_file = format!(".env.{env}");
+    let candidates = [".env.local", env_local.as_str(), env_file.as_str(), ".env"];
+    for file in candidates {
+        let _ = dotenvy::from_path(file);
+    }
+}
+
 fn resolve_boot() -> anyhow::Result<Boot> {
-    // 仅 debug 读取仓库 .env，方便本地开发；发布二进制不以 dotenv 为产品面。
+    // 仅 debug 读取仓库环境文件，方便本地开发；发布二进制不以 dotenv 为产品面。
     #[cfg(debug_assertions)]
-    let _ = dotenvy::dotenv();
+    load_local_env_files();
 
     if std::env::var("CHUNSUN_FORCE_SETUP").as_deref() == Ok("1") {
         return Ok(Boot::Setup {
