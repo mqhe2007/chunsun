@@ -554,18 +554,32 @@ pub async fn list_scenarios(
 
 pub async fn set_scenario_status(
     pool: &PgPool,
-    scenario_id: &str,
+    scenario_ref: &str,
     requirement_id: &str,
     status: &str,
 ) -> Result<Option<ScenarioRow>, AppError> {
+    // scenario_ref 支持内部 ID 或 key：先按 id 查，未命中再按 (requirement_id, key) 查，
+    // 对齐 put_case 的 scenarioId > scenarioKey 解析；两者都未命中返回 None → 404。
     let existing: Option<(String,)> =
         sqlx::query_as("SELECT id FROM scenario WHERE id = $1 AND requirement_id = $2")
-            .bind(scenario_id)
+            .bind(scenario_ref)
             .bind(requirement_id)
             .fetch_optional(pool)
             .await?;
-    let Some((id,)) = existing else {
-        return Ok(None);
+    let id = match existing {
+        Some((id,)) => id,
+        None => {
+            let by_key: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM scenario WHERE key = $1 AND requirement_id = $2")
+                    .bind(scenario_ref)
+                    .bind(requirement_id)
+                    .fetch_optional(pool)
+                    .await?;
+            match by_key {
+                Some((id,)) => id,
+                None => return Ok(None),
+            }
+        }
     };
     let row = sqlx::query_as::<_, ScenarioRow>(&format!(
         "UPDATE scenario SET status = $3::\"ScenarioStatus\", updated_at = NOW() WHERE id = $1 RETURNING {SCENARIO_COLS}"

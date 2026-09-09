@@ -58,6 +58,7 @@ struct Scenario {
 
 #[derive(Debug, Deserialize)]
 struct ScenarioWithCases {
+    id: String,
     key: String,
     title: String,
     status: String,
@@ -495,7 +496,7 @@ pub enum ScenarioCmd {
         #[arg(long)]
         json: bool,
     },
-    /// 场景状态（passing/failing/blocked/waived/pending）
+    /// 场景状态（scenario 可传内部 ID 或 key；passing/failing/blocked/waived/pending）
     Status {
         req: String,
         scenario: String,
@@ -522,10 +523,11 @@ pub fn run_scenario(args: ScenarioArgs) -> CmdResult {
             }
             for s in data {
                 println!(
-                    "{}  [{}]  {}",
+                    "{}  [{}]  {}  (id: {})",
                     s.key,
                     scenario_status_label(&s.status),
-                    s.title
+                    s.title,
+                    s.id
                 );
                 if include_cases {
                     for c in &s.cases {
