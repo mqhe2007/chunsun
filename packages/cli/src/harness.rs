@@ -744,7 +744,7 @@ mod tests {
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-09-08-memory-overhaul",
+            "2026-09-09-memory-markdown",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }

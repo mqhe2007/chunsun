@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 
 /// 当前模板版本号。技能 / 协议有结构性改动时必须递增。
 /// 与 `templates/VERSION` 及 CLI 侧 `fixture_version` 测试保持一致。
-pub const TEMPLATE_VERSION: &str = "2026-09-08-memory-overhaul";
+pub const TEMPLATE_VERSION: &str = "2026-09-09-memory-markdown";
 
 const SKILL: &str = include_str!("../templates/skill.md");
 const LOOP_RULES: &str = include_str!("../templates/loop-rules.md");
