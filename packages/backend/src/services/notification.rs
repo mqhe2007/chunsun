@@ -420,15 +420,6 @@ pub async fn reset_preferences(pool: &PgPool, user_id: &str) -> Result<Value, Ap
     preferences_dto(pool, user_id).await
 }
 
-/// snapshot 中 openDecisions 数组长度。
-pub fn open_decisions_len(snapshot: &Value) -> usize {
-    snapshot
-        .get("openDecisions")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0)
-}
-
 /// 需求通知收件人：owner，否则项目创建者。
 pub async fn delivery_recipient(
     pool: &PgPool,
@@ -550,15 +541,6 @@ mod tests {
         ] {
             assert!(category_for_event(e).is_some(), "missing {e}");
         }
-    }
-
-    #[test]
-    fn open_decisions_len_reads_array() {
-        assert_eq!(open_decisions_len(&json!({})), 0);
-        assert_eq!(
-            open_decisions_len(&json!({ "openDecisions": [{}, {}] })),
-            2
-        );
     }
 
     #[test]

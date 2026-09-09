@@ -27,9 +27,11 @@
 
 ## Memory（工作记忆）
 
+- 工作记忆是**自由 Markdown 文本**，按 skill.md 中的模板结构编写（需求边界 / 待决策 / 代码标记 / 环境变量 / 本轮总结等章节）。
+- 写入走「拉取-修改-保存」全流程：`memory get` → 本地修改 → `memory put --snapshot '<完整 Markdown>'` 全量覆盖。
 - 「声称即写入」：说「已写入工作记忆」必须真的调用过 `memory put`，只在回复里声称等同没写。
-- 每轮 Run 收尾（completed / finished）前必须写 `lastRunSummary`；`chunsun run remind` 会检查本轮是否写过记忆并提醒。
-- snapshot 整体 ≤ 20k 字符，超限平台拒绝（`MEMORY_TOO_LARGE`）；PUT 缺 `snapshot` 字段平台拒绝（`SNAPSHOT_REQUIRED`）。
+- 每轮 Run 收尾（completed / finished）前必须写「## 本轮总结」；`chunsun run remind` 会检查本轮是否写过记忆并提醒。
+- snapshot 整体 ≤ 20k 字符，超限平台拒绝（`MEMORY_TOO_LARGE`）；PUT 缺 `snapshot` 字段平台拒绝（`SNAPSHOT_REQUIRED`）。接近上限时主动精简旧内容。
 
 ## RRI（评审-反思-改进）
 

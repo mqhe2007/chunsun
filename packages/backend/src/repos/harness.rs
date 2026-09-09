@@ -95,7 +95,7 @@ pub struct MemoryRow {
     pub id: String,
     pub requirement_id: String,
     pub project_id: String,
-    pub snapshot: Value,
+    pub snapshot: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -407,29 +407,27 @@ pub async fn get_memory(
     Ok(row)
 }
 
-/// upsert Context：snapshot 全量覆盖（客户端传 §4 结构全量）。
+/// upsert Memory：snapshot 全量覆盖（Markdown 文本）。
 ///
-/// `snapshot` 三态复刻旧端 `prisma.context.update/create({ data: { snapshot } })`：
-/// - `None`（字段缺失 → JS undefined）：update 路径退化为空 data，Prisma 不发 UPDATE，
-///   连 `@updatedAt` 都不动 → 这里直接回读原行；create 路径必填缺参 → 500。
-/// - `Some(None)`（显式 null）：列是 `Json` 非空，落 jsonb `'null'`。
-/// - `Some(Some(v))`：正常写入。
+/// `snapshot` 三态：
+/// - `None`（字段缺失 → JS undefined）：update 路径不发 UPDATE，连 `@updatedAt` 都不动；
+///   create 路径必填缺参 → 500。
+/// - `Some(None)`（显式 null）：置 NULL（清空记忆）。
+/// - `Some(Some(v))`：正常写入 Markdown 文本。
 pub async fn upsert_memory(
     pool: &PgPool,
     requirement_id: &str,
     project_id: &str,
-    snapshot: Option<Option<&Value>>,
+    snapshot: Option<Option<&str>>,
 ) -> Result<MemoryRow, AppError> {
     let existing: Option<(String,)> =
         sqlx::query_as("SELECT id FROM requirement_memory WHERE requirement_id = $1")
             .bind(requirement_id)
             .fetch_optional(pool)
             .await?;
-    // 显式 null 与「有值」都要落库，缺失才走各自的退化分支。
-    let null_json = Value::Null;
     if let Some((id,)) = existing {
         let Some(value) = snapshot else {
-            // 空 data：Prisma 退化纯读，不刷 updated_at。
+            // 空 data：不发 UPDATE，不刷 updated_at。
             let row = sqlx::query_as::<_, MemoryRow>(&format!(
                 "SELECT {MEMORY_COLS} FROM requirement_memory WHERE id = $1"
             ))
@@ -442,7 +440,7 @@ pub async fn upsert_memory(
             "UPDATE requirement_memory SET snapshot = $2, updated_at = NOW() WHERE id = $1 RETURNING {MEMORY_COLS}"
         ))
         .bind(&id)
-        .bind(value.unwrap_or(&null_json))
+        .bind(value)
         .fetch_one(pool)
         .await?;
         Ok(row)
@@ -460,7 +458,7 @@ pub async fn upsert_memory(
         .bind(&id)
         .bind(requirement_id)
         .bind(project_id)
-        .bind(value.unwrap_or(&null_json))
+        .bind(value)
         .fetch_one(pool)
         .await?;
         Ok(row)
@@ -817,7 +815,9 @@ pub async fn delete_case_by_id(
 
 // ---------- 完成硬条件 / reset ----------
 
-/// completed 硬条件：所有场景 passing/waived 且无 open decisions。
+/// completed 硬条件：所有场景 passing/waived。
+/// （2026-09-09 起去掉 openDecisions 检查——记忆改为 Markdown 后无法可靠解析未决决策项，
+///  决策由 AI 在会话中主动提出，不再作为 completed 硬门禁。）
 pub async fn check_completion_gate(
     pool: &PgPool,
     requirement_id: &str,
@@ -830,11 +830,6 @@ pub async fn check_completion_gate(
     .bind(project_id)
     .fetch_all(pool)
     .await?;
-    let ctx: Option<(Value,)> =
-        sqlx::query_as("SELECT snapshot FROM requirement_memory WHERE requirement_id = $1")
-            .bind(requirement_id)
-            .fetch_optional(pool)
-            .await?;
     let mut blockers: Vec<Value> = Vec::new();
     for (key, title, status) in &scenarios {
         if status != "passing" && status != "waived" {
@@ -845,57 +840,36 @@ pub async fn check_completion_gate(
             let _ = key;
         }
     }
-    if let Some((snapshot,)) = ctx {
-        let open_decisions = snapshot
-            .get("openDecisions")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        if open_decisions > 0 {
-            blockers.push(json!({
-                "code": "OPEN_DECISIONS",
-                "detail": format!("存在 {open_decisions} 个未决 open decision"),
-            }));
-        }
-    }
     Ok((blockers.is_empty(), blockers))
 }
 
-/// reset（幂等）：清 Context 工作记忆（保留 requirementSnapshot）+ Scenario/Case 全部重置 pending + 开新 Run。
+/// reset（幂等）：清工作记忆 + Scenario/Case 全部重置 pending + 开新 Run。
+/// （2026-09-09 起记忆改为 Markdown，reset 时直接清空 snapshot，不再保留 requirementSnapshot。）
 pub async fn reset_requirement(
     pool: &PgPool,
     requirement_id: &str,
     project_id: &str,
 ) -> Result<RunRow, AppError> {
     let mut tx = pool.begin().await?;
-    // 取 id 与 snapshot 两列：id 用于 UPDATE 定位，snapshot 用于保留 requirementSnapshot。
-    let ctx: Option<(String, Value)> =
-        sqlx::query_as("SELECT id, snapshot FROM requirement_memory WHERE requirement_id = $1")
+    // 清空工作记忆（snapshot 置 NULL）
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM requirement_memory WHERE requirement_id = $1")
             .bind(requirement_id)
             .fetch_optional(&mut *tx)
             .await?;
-    let requirement_snapshot = ctx
-        .as_ref()
-        .and_then(|(_, s)| s.get("requirementSnapshot"))
-        .cloned();
-    let new_snapshot = requirement_snapshot
-        .map(|rs| json!({ "requirementSnapshot": rs }))
-        .unwrap_or_else(|| json!({}));
-    if let Some((id, _)) = ctx {
-        sqlx::query("UPDATE requirement_memory SET snapshot = $2, updated_at = NOW() WHERE id = $1")
+    if let Some((id,)) = existing {
+        sqlx::query("UPDATE requirement_memory SET snapshot = NULL, updated_at = NOW() WHERE id = $1")
             .bind(&id)
-            .bind(&new_snapshot)
             .execute(&mut *tx)
             .await?;
     } else {
         let id = nanoid(12);
         sqlx::query(
-            "INSERT INTO requirement_memory (id, requirement_id, project_id, snapshot, updated_at) VALUES ($1, $2, $3, $4, NOW())",
+            "INSERT INTO requirement_memory (id, requirement_id, project_id, snapshot, updated_at) VALUES ($1, $2, $3, NULL, NOW())",
         )
         .bind(&id)
         .bind(requirement_id)
         .bind(project_id)
-        .bind(&new_snapshot)
         .execute(&mut *tx)
         .await?;
     }

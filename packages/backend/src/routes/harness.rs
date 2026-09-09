@@ -32,7 +32,7 @@ use crate::repos::harness::{
 use crate::repos::project::get_project_by_id;
 use crate::repos::requirement::get_requirement_by_id;
 use crate::services::notification::{
-    delivery_recipient, notify, open_decisions_len, NotifyRequest,
+    delivery_recipient, notify, NotifyRequest,
 };
 use crate::state::AppState;
 
@@ -99,13 +99,13 @@ struct StepBody {
     artifacts: Option<Value>,
 }
 
-// 旧端 body schema 是 `t.Object({ snapshot: t.Any() })`；TypeBox 的 t.Any() **允许缺字段**。
-// 三态保留（显式 null = 落 jsonb 'null'），但「字段缺失」不再静默退化——put_memory
+// 工作记忆 snapshot 为 Markdown 文本（2026-09-09 起从 JSON 五字段改为自由 Markdown）。
+// 三态保留（显式 null = 落 NULL），但「字段缺失」不再静默退化——put_memory
 // 处理器直接 400 SNAPSHOT_REQUIRED（缺失即调用方 bug，静默回旧行会误诊为已写入）。
 #[derive(Debug, Deserialize)]
 struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
-    snapshot: Option<Option<Value>>,
+    snapshot: Option<Option<String>>,
 }
 
 /// 工作记忆 snapshot 粒度上限（字符数）：协议约定整体 ~20k 字符内，超出拒绝写入。
@@ -114,24 +114,20 @@ const MEMORY_SNAPSHOT_MAX_CHARS: usize = 20_000;
 /// 校验 PUT memory 的 snapshot 三态，通过则返回可下传仓储层的值：
 /// - 字段缺失 → 400 SNAPSHOT_REQUIRED（缺失即调用方 bug；旧行为静默回旧行返 200，
 ///   会让调用方误以为已写入，是「工作记忆没生效」类缺陷的温床）
-/// - 显式 null → 放行（落 jsonb 'null'，复刻旧端语义）
-/// - 序列化超 20k 字符 → 400 MEMORY_TOO_LARGE（Memory 是唯一进 prompt 的工作记忆，粒度严控）
+/// - 显式 null → 放行（落 NULL，清空记忆）
+/// - 超 20k 字符 → 400 MEMORY_TOO_LARGE（Memory 是唯一进 prompt 的工作记忆，粒度严控）
 fn validate_memory_snapshot(
-    snapshot: &Option<Option<Value>>,
-) -> Result<Option<&Value>, AppError> {
+    snapshot: &Option<Option<String>>,
+) -> Result<Option<&str>, AppError> {
     let Some(value) = snapshot.as_ref().map(|v| v.as_ref()) else {
         return Err(AppError::bad_request("SNAPSHOT_REQUIRED"));
     };
     if let Some(v) = value {
-        let len = serde_json::to_string(v)
-            .map_err(|e| AppError::internal(format!("snapshot 序列化失败：{e}")))?
-            .chars()
-            .count();
-        if len > MEMORY_SNAPSHOT_MAX_CHARS {
+        if v.chars().count() > MEMORY_SNAPSHOT_MAX_CHARS {
             return Err(AppError::bad_request("MEMORY_TOO_LARGE"));
         }
     }
-    Ok(value)
+    Ok(value.map(|x| x.as_str()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -525,38 +521,7 @@ async fn put_memory(
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
     let snapshot = validate_memory_snapshot(&body.snapshot)?;
-    let prev_open = get_memory(&state.pool(), &p.requirement_id, &p.project_id)
-        .await?
-        .map(|m| open_decisions_len(&m.snapshot))
-        .unwrap_or(0);
     let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, Some(snapshot)).await?;
-    let now_open = open_decisions_len(&ctx.snapshot);
-    if prev_open == 0 && now_open > 0 {
-        if let Some(recipient) =
-            delivery_recipient(&state.pool(), &p.requirement_id, &p.project_id).await?
-        {
-            notify(
-                &state.pool(),
-                &state.config().public_origin,
-                NotifyRequest {
-                    event: "run_needs_decision".into(),
-                    recipient_user_ids: vec![recipient],
-                    actor_user_id: Some(session.user.user_id.clone()),
-                    title: "轮次需要你决策".into(),
-                    body: Some(format!(
-                        "需求 {} 出现待决策项，请尽快处理。",
-                        p.requirement_id
-                    )),
-                    link: Some(format!(
-                        "/projects/{}/requirements/{}",
-                        p.project_id, p.requirement_id
-                    )),
-                    email_link: None,
-                },
-            )
-            .await?;
-        }
-    }
     Ok(ok_val(memory_dto(&ctx)))
 }
 

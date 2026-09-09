@@ -9,9 +9,16 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "@lucide/vue";
+import MarkdownIt from "markdown-it";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "@/utils/api";
+
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: false,
+});
 
 type Run = {
   id: string;
@@ -52,17 +59,7 @@ type CaseRow = {
 type ContextRow = {
   id: string;
   requirementId: string;
-  snapshot: {
-    requirementSnapshot?: unknown;
-    lastRunSummary?: unknown;
-    openDecisions?: Array<{
-      raisedAt?: string;
-      question?: string;
-      context?: string;
-    }>;
-    codeLandmarks?: Array<{ path?: string; symbol?: string; note?: string }>;
-    envRefs?: unknown[];
-  };
+  snapshot: string | null;
   updatedAt: string;
 };
 
@@ -76,6 +73,7 @@ const runs = ref<Run[]>([]);
 const scenarios = ref<Scenario[]>([]);
 const context = ref<ContextRow | null>(null);
 const expandedRun = ref<string | null>(null);
+const memoryExpanded = ref(false);
 const stepsByRun = ref<Record<string, Step[]>>({});
 const stepsLoading = ref<Record<string, boolean>>({});
 
@@ -134,9 +132,11 @@ const scenarioPassingCount = computed(
       .length,
 );
 
-const openDecisionCount = computed(
-  () => context.value?.snapshot.openDecisions?.length ?? 0,
-);
+const renderedMemory = computed(() => {
+  const text = context.value?.snapshot;
+  if (!text || !text.trim()) return "";
+  return md.render(text);
+});
 
 const latestRunLabel = computed(() => {
   const run = latestRun.value;
@@ -210,88 +210,6 @@ function visibleCases(s: Scenario): CaseRow[] {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
-}
-
-/** 从未决决策项中提取展示文本，兼容 question/text/content/decision/字符串等多种结构 */
-function decisionText(d: unknown): string {
-  if (typeof d === "string") return d.trim() || "（无文本内容）";
-  if (d && typeof d === "object") {
-    const obj = d as Record<string, unknown>;
-    for (const key of ["question", "text", "content", "decision", "title", "summary"]) {
-      const v = obj[key];
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-    for (const v of Object.values(obj)) {
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-  }
-  return "（无文本内容）";
-}
-
-/** 从代码标记项中提取展示文本，兼容 path/file/location 等多种字段 */
-function landmarkText(l: unknown): string {
-  if (typeof l === "string") return l.trim() || "（无路径）";
-  if (l && typeof l === "object") {
-    const obj = l as Record<string, unknown>;
-    const path = obj.path ?? obj.file ?? obj.location;
-    const symbol = obj.symbol ?? obj.func ?? obj.name;
-    if (typeof path === "string" && path.trim()) {
-      return typeof symbol === "string" && symbol.trim()
-        ? `${path.trim()}:${symbol.trim()}`
-        : path.trim();
-    }
-    for (const v of Object.values(obj)) {
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-  }
-  return "（无路径）";
-}
-
-/** 从代码标记项中提取完整文本作为 title 提示 */
-function landmarkTitle(l: unknown): string {
-  if (l && typeof l === "object") {
-    const obj = l as Record<string, unknown>;
-    const note = obj.note ?? obj.description ?? obj.comment;
-    if (typeof note === "string" && note.trim()) {
-      return `${landmarkText(l)}\n${note.trim()}`;
-    }
-  }
-  return landmarkText(l);
-}
-
-/** 通用 JSON 美化：requirementSnapshot / lastRunSummary 等自由结构字段的展示 */
-function prettyJson(v: unknown): string {
-  if (typeof v === "string") return v;
-  try {
-    return JSON.stringify(v, null, 2) ?? String(v);
-  } catch {
-    return String(v);
-  }
-}
-
-/** 判断自由结构字段是否「有内容」（null/undefined/空对象/空数组/空串视为无） */
-function hasContent(v: unknown): boolean {
-  if (v === null || v === undefined) return false;
-  if (typeof v === "string") return v.trim().length > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === "object") return Object.keys(v as object).length > 0;
-  return true;
-}
-
-/** 环境变量引用项展示文本，兼容 "KEY" 与 { key: "KEY" } 等结构 */
-function envRefText(e: unknown): string {
-  if (typeof e === "string") return e.trim() || "（无 key）";
-  if (e && typeof e === "object") {
-    const obj = e as Record<string, unknown>;
-    for (const key of ["key", "name", "envKey", "variable"]) {
-      const v = obj[key];
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-    for (const v of Object.values(obj)) {
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-  }
-  return "（无 key）";
 }
 
 async function loadSteps(runId: string) {
@@ -381,98 +299,40 @@ onMounted(fetchAll);
         </span>
         <span class="strip-label">场景通过</span>
       </div>
-      <div class="strip-item">
-        <span
-          class="strip-value"
-          :class="{ 'strip-value--warn': openDecisionCount > 0 }"
-        >
-          {{ openDecisionCount }}
-        </span>
-        <span class="strip-label">未决决策</span>
-      </div>
     </div>
 
-    <section class="panel panel--context">
-      <div class="panel-head">
+    <section class="panel panel--context" :class="{ 'panel--collapsed': !memoryExpanded }">
+      <button
+        type="button"
+        class="panel-head panel-head--toggle"
+        :aria-expanded="memoryExpanded"
+        @click="memoryExpanded = !memoryExpanded"
+      >
         <h2 class="panel-title">工作记忆</h2>
-        <span v-if="context" class="panel-meta text-base-content/60">
-          {{ formatDateTime(context.updatedAt) }}
+        <span class="panel-head-right">
+          <span v-if="context" class="panel-meta text-base-content/60">
+            {{ formatDateTime(context.updatedAt) }}
+          </span>
+          <span class="panel-chevron text-base-content/60" aria-hidden="true">
+            {{ memoryExpanded ? "▲" : "▼" }}
+          </span>
         </span>
-      </div>
+      </button>
 
-      <p v-if="!context" class="empty-hint text-base-content/60">
-        暂无工作记忆——交付循环中由 Agent 经 memory put 写入。
-      </p>
-      <template v-else>
-        <div class="context-blocks context-blocks--grid">
-          <div class="context-block">
-            <h3 class="context-label">已澄清边界</h3>
-            <pre
-              v-if="hasContent(context.snapshot.requirementSnapshot)"
-              class="snapshot-pre"
-            >{{ prettyJson(context.snapshot.requirementSnapshot) }}</pre>
-            <p v-else class="empty-hint text-base-content/60">暂无已澄清边界。</p>
-          </div>
-
-          <div class="context-block">
-            <h3 class="context-label">上一轮摘要</h3>
-            <pre
-              v-if="hasContent(context.snapshot.lastRunSummary)"
-              class="snapshot-pre"
-            >{{ prettyJson(context.snapshot.lastRunSummary) }}</pre>
-            <p v-else class="empty-hint text-base-content/60">暂无上轮摘要。</p>
-          </div>
-
-          <div class="context-block">
-            <h3 class="context-label">未决决策</h3>
-            <div
-              v-if="context.snapshot.openDecisions?.length"
-              class="open-decisions"
-            >
-              <div
-                v-for="(d, i) in context.snapshot.openDecisions"
-                :key="i"
-                class="decision-item"
-              >
-                <CircleQuestionMark :size="16" aria-hidden="true" class="decision-icon" />
-                <span class="decision-text">{{ decisionText(d) }}</span>
-              </div>
-            </div>
-            <p v-else class="empty-hint text-base-content/60">无未决 open decision。</p>
-          </div>
-
-          <div class="context-block">
-            <h3 class="context-label">代码标记</h3>
-            <div
-              v-if="context.snapshot.codeLandmarks?.length"
-              class="landmarks"
-            >
-              <span
-                v-for="(l, i) in context.snapshot.codeLandmarks"
-                :key="i"
-                class="landmark-item"
-                :title="landmarkTitle(l)"
-              >
-                {{ landmarkText(l) }}
-              </span>
-            </div>
-            <p v-else class="empty-hint text-base-content/60">暂无代码标记。</p>
-          </div>
-
-          <div class="context-block">
-            <h3 class="context-label">环境变量引用</h3>
-            <div v-if="context.snapshot.envRefs?.length" class="landmarks">
-              <span
-                v-for="(e, i) in context.snapshot.envRefs"
-                :key="i"
-                class="landmark-item"
-              >
-                {{ envRefText(e) }}
-              </span>
-            </div>
-            <p v-else class="empty-hint text-base-content/60">暂无环境变量引用。</p>
-          </div>
-        </div>
+      <template v-if="memoryExpanded">
+        <p v-if="!context" class="empty-hint text-base-content/60">
+          暂无工作记忆——交付循环中由 Agent 经 memory put 写入。
+        </p>
+        <template v-else>
+          <div
+            v-if="renderedMemory"
+            class="markdown-body"
+            v-html="renderedMemory"
+          />
+          <p v-else class="empty-hint text-base-content/60">
+            工作记忆为空。
+          </p>
+        </template>
       </template>
     </section>
 
@@ -738,6 +598,37 @@ onMounted(fetchAll);
   justify-content: space-between;
   gap: 0.35rem 0.75rem;
   margin-bottom: 0.85rem;
+}
+
+.panel-head--toggle {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.panel-head--toggle:hover .panel-title {
+  color: var(--color-primary);
+}
+
+.panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel-chevron {
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.panel--collapsed {
+  padding-bottom: 0.75rem;
 }
 
 .panel-title {
@@ -1041,97 +932,97 @@ onMounted(fetchAll);
   text-decoration: underline;
 }
 
-.context-blocks {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.85rem;
-}
-
-@media (min-width: 720px) {
-  .context-blocks--grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.85rem 1.5rem;
-  }
-}
-
-.snapshot-pre {
-  margin: 0;
-  padding: 0.5rem 0.65rem;
-  border-radius: 8px;
-  background: var(--color-base-200);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  max-height: 16rem;
-  overflow-y: auto;
-}
-
-.context-block + .context-block {
-  margin-top: 0;
-}
-
-.context-label {
-  margin: 0 0 0.4rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.open-decisions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.decision-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.4rem;
-  font-size: 0.85rem;
+.markdown-body {
+  font-size: 0.88rem;
+  line-height: 1.6;
   color: var(--color-base-content);
-  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
-  border: 1px solid color-mix(in oklab, var(--color-warning) 30%, transparent);
-  border-radius: 8px;
-  padding: 0.35rem 0.55rem;
-  line-height: 1.4;
-}
-
-.decision-icon {
-  flex-shrink: 0;
-  margin-top: 0.1rem;
-  color: var(--color-warning);
-}
-
-.decision-text {
-  min-width: 0;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
-.landmarks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3) {
+  margin: 1rem 0 0.5rem;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
-.landmark-item {
+.markdown-body :deep(h1) { font-size: 1.15rem; }
+.markdown-body :deep(h2) { font-size: 1.05rem; }
+.markdown-body :deep(h3) { font-size: 0.95rem; }
+
+.markdown-body :deep(p) {
+  margin: 0.5rem 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 0.5rem 0;
+  padding-left: 1.4rem;
+}
+
+.markdown-body :deep(li) {
+  margin: 0.2rem 0;
+}
+
+.markdown-body :deep(code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: 0.8em;
   background: var(--color-base-200);
-  border-radius: 6px;
-  padding: 0.2rem 0.45rem;
-  color: color-mix(in oklab, var(--color-base-content) 88%, transparent);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 0 1 auto;
-  min-width: 0;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.markdown-body :deep(pre) {
+  margin: 0.6rem 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 8px;
+  background: var(--color-base-200);
+  overflow-x: auto;
+}
+
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 0.5rem 0;
+  padding: 0.3rem 0.8rem;
+  border-left: 3px solid var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.82rem;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid var(--color-base-300);
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+}
+
+.markdown-body :deep(th) {
+  background: var(--color-base-200);
+  font-weight: 600;
+}
+
+.markdown-body :deep(a) {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.markdown-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--color-base-300);
+  margin: 0.8rem 0;
 }
 
 

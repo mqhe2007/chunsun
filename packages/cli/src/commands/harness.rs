@@ -199,22 +199,13 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
         reminders.push(format!("场景「{}」当前为 failing，需修复后置 passing。", s.title));
     }
 
-    // 工作记忆拉取一次，供 openDecisions 与「本轮未写记忆」两处检查共用（404/失败按无记忆处理）。
+    // 工作记忆拉取一次，供「本轮未写记忆」检查使用（404/失败按无记忆处理）。
+    // （2026-09-09 起去掉 openDecisions 检查——记忆改为 Markdown 后无法可靠解析未决决策项，
+    //  决策由 AI 在会话中主动提出，不再作为 remind 柔性约束。）
     let memory = api
         .get::<Value>(&format!("{}/memory", req_path(project_id, req)))
         .ok()
         .and_then(|v| v.get("data").cloned());
-    if let Some(context) = &memory {
-        let open = context
-            .get("snapshot")
-            .and_then(|s| s.get("openDecisions"))
-            .and_then(|o| o.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        if open > 0 {
-            reminders.push(format!("存在 {open} 个未决 open decision，处理或更新后再继续。"));
-        }
-    }
 
     if let Some(run) = runs.iter().find(|r| r.status == "running") {
         // 本轮未写记忆：memory 不存在或 updatedAt 未晚于本 Run 开始时间（秒级）。
@@ -224,7 +215,7 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
             .and_then(|v| v.as_str());
         if memory_stale_for_run(memory_updated_at, &run.started_at) {
             reminders.push(
-                "当前 Run 尚未写入工作记忆——收尾（completed/finished）前必须用 memory put 写 lastRunSummary，否则断点不可续（声称写入 ≠ 已写入）。"
+                "当前 Run 尚未写入工作记忆——收尾（completed/finished）前必须用 memory put 写本轮总结，否则断点不可续（声称写入 ≠ 已写入）。"
                     .into(),
             );
         }

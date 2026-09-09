@@ -154,28 +154,59 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 - **自动解锁**：任务完成（completed/resolved）后 `chunsun dependency unlock requirement|defect <ID>` 检查下游：
   - 下游所有前置已完成 → 自动解锁，可进入执行；
   - 仍被阻塞（有其他未完成前置）→ 记录仍阻塞原因。
-- **阻塞原因入工作记忆**：被阻塞任务必须在 Memory 的 `dependencySnapshot` 中记录阻塞原因与前置任务列表（验收标准：明确留痕）。
+- **阻塞原因入工作记忆**：被阻塞任务必须在 Memory 的「## 阻塞原因」章节中记录阻塞原因与前置任务列表（验收标准：明确留痕）。
 - **节点完成语义**：requirement 状态 `completed` 视为完成；defect 状态 `resolved` / `closed` 视为完成。
 
 ## Memory（工作记忆）
 
-每个需求一份，平台 SSOT，CLI 维护。**关系型数据（场景/用例）唯一真相在平台表，Memory 不存镜像**——启动时实时拉取聚合。Memory 只存：
+每个需求一份，平台 SSOT，CLI 维护。**关系型数据（场景/用例）唯一真相在平台表，Memory 不存镜像**——启动时实时拉取聚合。Memory 是**自由 Markdown 文本**，AI 按以下模板结构编写，可按需增减章节。
 
-- `requirementSnapshot`：已澄清边界（重来保留）
-- `lastRunSummary`：上一轮决策链与结果
-- `openDecisions`：待用户确认的点
-- `codeLandmarks`：关键代码位置/摘要（不存代码本体）
-- `envRefs`：引用的环境变量 key
+**推荐模板**（写入时按需填充，空章节可省略）：
+
+```markdown
+## 需求边界
+已澄清的范围、目标、约束。
+
+## 待决策
+- [ ] 决策项 1（背景 + 选项）
+- [ ] 决策项 2
+
+## 代码标记
+- `path/to/file.rs:symbol` — 备注
+- `path/to/file.vue` — 备注
+
+## 环境变量
+- `KEY_NAME` — 用途
+
+## 阻塞原因
+被前置任务阻塞时记录：阻塞原因 + 未完成前置列表。
+
+## 本轮总结
+### 做了什么
+...
+### 关键决策与理由
+...
+### 结果
+...
+### 下一步建议
+...
+```
+
+**写入流程（拉取-修改-保存）**：
+
+1. `chunsun requirement memory get <ID>` 拉取当前记忆
+2. 在本地修改 Markdown 文本（更新章节、追加内容、精简旧内容）
+3. `chunsun requirement memory put <ID> --snapshot '<完整 Markdown>'` 全量覆盖保存
 
 **写入时机（强制）**：
 
-1. **边界澄清后** → 立即 `memory put` 写 `requirementSnapshot`。
-2. **出现待用户决策项** → 立即写 `openDecisions`（平台会触发通知）；用户答复后及时更新/清空。
-3. **定位到关键实现** → 随手写 `codeLandmarks`；引用环境变量即记 `envRefs`。
-4. **每轮 Run 收尾（completed / finished）前** → 必须写 `lastRunSummary`：本轮做了什么 / 关键决策与理由 / 结果 / 下一步建议。不写则断点不可续。
+1. **边界澄清后** → 立即更新「## 需求边界」章节。
+2. **出现待用户决策项** → 立即写入「## 待决策」章节；用户答复后及时更新/清空。
+3. **定位到关键实现** → 随手写入「## 代码标记」；引用环境变量即记入「## 环境变量」。
+4. **每轮 Run 收尾（completed / finished）前** → 必须写「## 本轮总结」：做了什么 / 关键决策与理由 / 结果 / 下一步建议。不写则断点不可续。
 5. **声称即写入**：在回复里说「已写入工作记忆」必须真的调用过 `memory put`——只在文字里声称等同没写。`chunsun run remind` 会检查本轮 Run 是否写过记忆，未写会在进下一轮 prompt 前提醒。
 
-**粒度严控**（整体 ~20k 字符内，超限平台拒绝写入 `MEMORY_TOO_LARGE`）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
+**粒度严控**（整体 ~20k 字符内，超限平台拒绝写入 `MEMORY_TOO_LARGE`）：Memory 是唯一进 prompt 的工作记忆，存太少断点不可续、存太多爆上下文，按「续跑必需」原则取舍。接近上限时主动精简旧内容（如把旧的本轮总结压缩为一句话）。Step.detail 宽松存（不回喂 prompt，仅平台展示/审计）。
 
 ## Knowledge（项目知识，按需渐进式披露）
 

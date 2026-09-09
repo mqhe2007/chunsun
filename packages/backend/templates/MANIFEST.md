@@ -31,6 +31,13 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ③配套实现：CLI `run remind` 新增「本轮未写记忆」柔性提醒；后端 PUT memory 缺 snapshot 字段 400、超 20k 字符 400；
 > ④console 需求详情「工作记忆」面板完整渲染五字段（此前只显示 openDecisions+codeLandmarks，是「记忆没生效」症状的展示层根因）。
 >
+> 2026-09-09-memory-markdown：工作记忆从 JSON 五字段改为自由 Markdown 文本——
+> ①snapshot 列从 JSONB 改为 TEXT（允许 NULL），后端 PUT 校验改为字符串长度 ≤20k；
+> ②去掉 openDecisions 通知触发与 completed 硬门禁中的 openDecisions 检查（决策由 AI 在会话中主动提出）；
+> ③CLI `memory put` 从增量合并改为全量覆盖（拉取-修改-保存全流程），去掉 merge_snapshot；
+> ④console 面板从五区块结构化渲染改为 markdown-it 单区块渲染（XSS 防护：html:false）；
+> ⑤skill.md「Memory」节重写为 Markdown 模板（需求边界/待决策/代码标记/环境变量/阻塞原因/本轮总结），loop-rules.md 同步更新。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

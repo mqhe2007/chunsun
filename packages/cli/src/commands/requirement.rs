@@ -68,11 +68,11 @@ enum MemoryAction {
         #[arg(long)]
         json: bool,
     },
-    /// 增量写回需求工作记忆（顶层 key 合并后 PUT）
+    /// 全量覆盖写回需求工作记忆（Markdown 文本）
     Put {
         /// 需求 ID
         req: String,
-        /// snapshot JSON 字符串，例如 '{"lastRunSummary":{...},"codeLandmarks":[...]}'
+        /// snapshot Markdown 字符串，例如 '## 需求边界\n...'
         #[arg(long)]
         snapshot: String,
         #[arg(long)]
@@ -124,7 +124,7 @@ struct RequirementMemoryRow {
     requirement_id: String,
     #[allow(dead_code)]
     project_id: String,
-    snapshot: Value,
+    snapshot: Option<String>,
     updated_at: String,
 }
 
@@ -137,46 +137,6 @@ struct MemoryResponse {
 
 fn memory_path(project_id: &str, req: &str) -> String {
     format!("/projects/{project_id}/requirements/{req}/memory")
-}
-
-/// 顶层 key 增量合并：patch 覆盖同名 key，其余保留。
-fn merge_snapshot(existing: &Value, patch: &Value) -> Value {
-    let mut base = match existing {
-        Value::Object(map) => Value::Object(map.clone()),
-        _ => json!({}),
-    };
-    if let Some(obj) = patch.as_object() {
-        if let Some(base_obj) = base.as_object_mut() {
-            for (k, v) in obj {
-                base_obj.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    base
-}
-
-fn fetch_existing_snapshot(api: &ApiClient, path: &str) -> Result<Value, CmdError> {
-    match api.get::<Value>(path) {
-        Ok(raw) => {
-            if raw.get("success").and_then(|v| v.as_bool()) == Some(true) {
-                Ok(raw
-                    .get("data")
-                    .and_then(|d| d.get("snapshot"))
-                    .cloned()
-                    .unwrap_or_else(|| json!({})))
-            } else {
-                Ok(json!({}))
-            }
-        }
-        Err(err) => {
-            let msg = err.to_string();
-            if msg.contains("MEMORY_NOT_FOUND") || msg.contains("(404)") {
-                Ok(json!({}))
-            } else {
-                Err(err.into())
-            }
-        }
-    }
 }
 
 fn run_memory_get(req: String, json: bool) -> CmdResult {
@@ -194,7 +154,7 @@ fn run_memory_get(req: String, json: bool) -> CmdResult {
                     }
                     println!("[chunsun] 暂无工作记忆（Memory）。");
                     println!(
-                        "  写入：chunsun requirement memory put {req} --snapshot '{{\"lastRunSummary\":{{}}}}'"
+                        "  写入：chunsun requirement memory put {req} --snapshot '## 需求边界\\n...'"
                     );
                     return Ok(());
                 }
@@ -210,7 +170,10 @@ fn run_memory_get(req: String, json: bool) -> CmdResult {
             println!("Memory: {}", data.id);
             println!("更新: {}", data.updated_at);
             println!("snapshot:");
-            println!("{}", serde_json::to_string_pretty(&data.snapshot)?);
+            match &data.snapshot {
+                Some(text) if !text.is_empty() => println!("{text}"),
+                _ => println!("（空）"),
+            }
             Ok(())
         }
         Err(err) => {
@@ -221,7 +184,7 @@ fn run_memory_get(req: String, json: bool) -> CmdResult {
                 }
                 println!("[chunsun] 暂无工作记忆（Memory）。");
                 println!(
-                    "  写入：chunsun requirement memory put {req} --snapshot '{{\"lastRunSummary\":{{}}}}'"
+                    "  写入：chunsun requirement memory put {req} --snapshot '## 需求边界\\n...'"
                 );
                 Ok(())
             } else {
@@ -236,17 +199,8 @@ fn run_memory_put(req: String, snapshot_raw: String, json: bool) -> CmdResult {
     let api = ApiClient::new(&config)?;
     let path = memory_path(&config.project_id, &req);
 
-    let patch: Value = serde_json::from_str(&snapshot_raw)
-        .map_err(|e| CmdError::new(format!("--snapshot 不是合法 JSON：{e}")))?;
-    if !patch.is_object() {
-        return Err(CmdError::new("--snapshot 须为 JSON 对象"));
-    }
-
-    let existing = fetch_existing_snapshot(&api, &path)?;
-    let merged = merge_snapshot(&existing, &patch);
-
     let result: MemoryResponse =
-        api.put(&path, json!({ "snapshot": merged.clone() }))?;
+        api.put(&path, json!({ "snapshot": snapshot_raw }))?;
     if !result.success {
         return Err(CmdError::new(
             result.error.unwrap_or_else(|| "写入工作记忆失败".into()),
@@ -261,13 +215,8 @@ fn run_memory_put(req: String, snapshot_raw: String, json: bool) -> CmdResult {
     }
     println!("[chunsun] 工作记忆已写入：{}", data.requirement_id);
     println!("  更新: {}", data.updated_at);
-    let keys: Vec<&str> = merged
-        .as_object()
-        .map(|o| o.keys().map(|k| k.as_str()).collect())
-        .unwrap_or_default();
-    if !keys.is_empty() {
-        println!("  snapshot keys: {}", keys.join(", "));
-    }
+    let chars = data.snapshot.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    println!("  字符数: {chars}");
     Ok(())
 }
 
@@ -456,35 +405,5 @@ pub fn run(args: RequirementArgs) -> CmdResult {
             println!("[chunsun] 需求已更新：{}  [{}]", data.id, data.status);
             Ok(())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn merge_snapshot_patches_top_level_keys_only() {
-        // patch 覆盖同名 key，既有 key 保留（CLI 增量合并语义——服务端 PUT 是全量替换，
-        // 合并发生在客户端，这正是「必须经 CLI 写记忆」的原因）
-        let existing = json!({
-            "requirementSnapshot": {"scope": "A"},
-            "openDecisions": [{"question": "q1"}]
-        });
-        let patch = json!({"lastRunSummary": {"note": "done"}});
-        let merged = merge_snapshot(&existing, &patch);
-        assert_eq!(merged["requirementSnapshot"], json!({"scope": "A"}));
-        assert_eq!(merged["openDecisions"], json!([{"question": "q1"}]));
-        assert_eq!(merged["lastRunSummary"], json!({"note": "done"}));
-
-        // 同名 key 被 patch 整体替换（不做深合并）
-        let patch2 = json!({"openDecisions": []});
-        let merged2 = merge_snapshot(&merged, &patch2);
-        assert_eq!(merged2["openDecisions"], json!([]));
-        assert_eq!(merged2["requirementSnapshot"], json!({"scope": "A"}));
-
-        // existing 非对象（如 jsonb 'null'）→ 以空对象为底
-        let merged3 = merge_snapshot(&Value::Null, &patch);
-        assert_eq!(merged3, json!({"lastRunSummary": {"note": "done"}}));
     }
 }
