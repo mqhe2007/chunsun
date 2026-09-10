@@ -2,6 +2,7 @@
 set -e
 
 BASE_URL="__CHUNSUN_CLI_DOWNLOAD_URL__"
+VERSION="__CHUNSUN_VERSION__"
 INSTALL_DIR="$HOME/.local/bin"
 COMMAND_NAME="chunsun"
 TARGET="$INSTALL_DIR/$COMMAND_NAME"
@@ -31,9 +32,9 @@ case "$ARCH" in
     ;;
 esac
 
-BINARY_NAME="chunsun-cli-${OS_NAME}-${ARCH_NAME}"
+BINARY_NAME="chunsun-cli-${OS_NAME}-${ARCH_NAME}-v${VERSION}"
 BINARY_URL="${BASE_URL}/${BINARY_NAME}"
-echo "[install] 平台: ${OS_NAME}-${ARCH_NAME}"
+echo "[install] 平台: ${OS_NAME}-${ARCH_NAME}-v${VERSION}"
 
 # 确保安装目录存在
 mkdir -p "$INSTALL_DIR"

@@ -30,12 +30,18 @@ if [[ -z "${CHUNSUN_DEFAULT_API_URL:-}" ]]; then
   echo "[release] 警告：未设置 CHUNSUN_DEFAULT_API_URL / PUBLIC_ORIGIN，CLI 将不内嵌默认实例地址。" >&2
 fi
 
+# 产物文件名带版本号（如 chunsun-cli-darwin-arm64-v0.9.3）：
+# 每次发版 URL 唯一，CDN 缓存策略无论怎么设都会回源拉取最新产物（cache-busting）。
+# 版本号单一来源：根 package.json（与 CLI build.rs 一致）。
+CLI_VERSION="$(node -p "require('$ROOT/package.json').version")"
+echo "[release] CLI 产物版本号: v${CLI_VERSION}"
+
 CLI_FILES=(
-  chunsun-cli-darwin-arm64
-  chunsun-cli-darwin-x64
-  chunsun-cli-linux-x64
-  chunsun-cli-linux-arm64
-  chunsun-cli-windows-x64.exe
+  "chunsun-cli-darwin-arm64-v${CLI_VERSION}"
+  "chunsun-cli-darwin-x64-v${CLI_VERSION}"
+  "chunsun-cli-linux-x64-v${CLI_VERSION}"
+  "chunsun-cli-linux-arm64-v${CLI_VERSION}"
+  "chunsun-cli-windows-x64-v${CLI_VERSION}.exe"
 )
 
 mkdir -p "$DIST"
@@ -45,7 +51,7 @@ rm -f "$DIST"/.keep \
   "$DIST"/chunsun-linux-x64 \
   "$DIST"/chunsun-linux-arm64 \
   "$DIST"/chunsun-windows-x64.exe \
-  "${CLI_FILES[@]/#/$DIST/}"
+  "$DIST"/chunsun-cli-*
 
 build_one() {
   local triple="$1"
@@ -60,13 +66,13 @@ build_one aarch64-unknown-linux-musl
 build_one x86_64-pc-windows-gnu
 
 CLI_TARGET_DIR="$ROOT/packages/cli/target"
-cp "$CLI_TARGET_DIR/aarch64-apple-darwin/release/chunsun" "$DIST/chunsun-cli-darwin-arm64"
-cp "$CLI_TARGET_DIR/x86_64-apple-darwin/release/chunsun" "$DIST/chunsun-cli-darwin-x64"
-cp "$CLI_TARGET_DIR/x86_64-unknown-linux-musl/release/chunsun" "$DIST/chunsun-cli-linux-x64"
-cp "$CLI_TARGET_DIR/aarch64-unknown-linux-musl/release/chunsun" "$DIST/chunsun-cli-linux-arm64"
-cp "$CLI_TARGET_DIR/x86_64-pc-windows-gnu/release/chunsun.exe" "$DIST/chunsun-cli-windows-x64.exe"
-chmod 755 "$DIST"/chunsun-cli-darwin-arm64 "$DIST"/chunsun-cli-darwin-x64 \
-  "$DIST"/chunsun-cli-linux-x64 "$DIST"/chunsun-cli-linux-arm64
+cp "$CLI_TARGET_DIR/aarch64-apple-darwin/release/chunsun" "$DIST/chunsun-cli-darwin-arm64-v${CLI_VERSION}"
+cp "$CLI_TARGET_DIR/x86_64-apple-darwin/release/chunsun" "$DIST/chunsun-cli-darwin-x64-v${CLI_VERSION}"
+cp "$CLI_TARGET_DIR/x86_64-unknown-linux-musl/release/chunsun" "$DIST/chunsun-cli-linux-x64-v${CLI_VERSION}"
+cp "$CLI_TARGET_DIR/aarch64-unknown-linux-musl/release/chunsun" "$DIST/chunsun-cli-linux-arm64-v${CLI_VERSION}"
+cp "$CLI_TARGET_DIR/x86_64-pc-windows-gnu/release/chunsun.exe" "$DIST/chunsun-cli-windows-x64-v${CLI_VERSION}.exe"
+chmod 755 "$DIST"/chunsun-cli-darwin-arm64-v${CLI_VERSION} "$DIST"/chunsun-cli-darwin-x64-v${CLI_VERSION} \
+  "$DIST"/chunsun-cli-linux-x64-v${CLI_VERSION} "$DIST"/chunsun-cli-linux-arm64-v${CLI_VERSION}
 
 missing=0
 for f in "${CLI_FILES[@]}"; do
