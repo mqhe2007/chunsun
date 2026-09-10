@@ -89,3 +89,7 @@ if [[ "$missing" -ne 0 ]]; then
 fi
 
 echo "[release] CLI dist 完成: $DIST"
+
+# 构建后自检：产物版本与 package.json 不一致时立即失败（防再犯闭环）
+echo "[release] 校验 dist 产物版本..."
+bash "$ROOT/scripts/check-version-consistency.sh"

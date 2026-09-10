@@ -123,8 +123,7 @@ if [[ -d "$DIST" ]]; then
     fi
   done
 else
-  echo "::error::CLI dist 目录不存在: $DIST"
-  MISMATCH=1
+  echo "::warning::CLI dist 目录不存在（${DIST}），跳过产物校验（CI 无构建产物；本地请先 pnpm run cli:dist）"
 fi
 
 if [[ "$MISMATCH" -ne 0 ]]; then
