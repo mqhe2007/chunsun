@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
 const CLI_DOWNLOAD_URL_PLACEHOLDER: &str = "__CHUNSUN_CLI_DOWNLOAD_URL__";
+const CHUNSUN_VERSION_PLACEHOLDER: &str = "__CHUNSUN_VERSION__";
 
 #[derive(Embed)]
 #[folder = "$OUT_DIR/web"]
@@ -65,7 +66,9 @@ fn serve_cli(req: &Request, relative: &str) -> Response {
             .filter(|s| !s.is_empty())
             .unwrap_or("http");
         let cli_base = format!("{proto}://{host}/cli");
-        let body = String::from_utf8_lossy(&file.data).replace(CLI_DOWNLOAD_URL_PLACEHOLDER, &cli_base);
+        let body = String::from_utf8_lossy(&file.data)
+            .replace(CLI_DOWNLOAD_URL_PLACEHOLDER, &cli_base)
+            .replace(CHUNSUN_VERSION_PLACEHOLDER, env!("CHUNSUN_VERSION"));
         return text_plain(body, req.method() == axum::http::Method::HEAD);
     }
     if relative == ".keep" {
@@ -82,8 +85,7 @@ fn serve_cli(req: &Request, relative: &str) -> Response {
     };
     let res = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "application/octet-stream")
-        .header(header::CACHE_CONTROL, "no-store");
+        .header(CONTENT_TYPE, "application/octet-stream");
     if req.method() == axum::http::Method::HEAD {
         res.body(Body::empty()).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
     } else {
@@ -159,8 +161,7 @@ fn mime_for(path: &str) -> &'static str {
 fn text_plain(body: String, head: bool) -> Response {
     let builder = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-store");
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8");
     if head {
         builder.body(Body::empty()).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
     } else {

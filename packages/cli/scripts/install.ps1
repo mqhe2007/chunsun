@@ -5,6 +5,7 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $BaseUrl    = "__CHUNSUN_CLI_DOWNLOAD_URL__"
+$Version    = "__CHUNSUN_VERSION__"
 $InstallDir = Join-Path $HOME ".local\bin"
 $CommandName = "chunsun.exe"
 $Target     = Join-Path $InstallDir $CommandName
@@ -18,9 +19,9 @@ if ($arch -ne "AMD64") {
     exit 1
 }
 
-$BinaryName = "chunsun-cli-windows-x64.exe"
+$BinaryName = "chunsun-cli-windows-x64-v$Version.exe"
 $BinaryUrl  = "$BaseUrl/$BinaryName"
-Write-Host "[install] 平台: windows-x64"
+Write-Host "[install] 平台: windows-x64-v$Version"
 
 # 确保安装目录存在
 if (-not (Test-Path $InstallDir)) {

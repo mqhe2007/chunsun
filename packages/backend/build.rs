@@ -22,8 +22,7 @@ fn main() {
     let cli_scripts_out = out.join("cli-scripts");
     let cli_dist_out = out.join("cli-dist");
 
-    fs::create_dir_all(&web_out).unwrap();
-
+    clear_dir(&web_out).expect("clear web out");
     let website_dist = repo.join("packages/website/dist");
     if website_dist.join("index.html").is_file() {
         copy_dir(&website_dist, &web_out).expect("copy website dist");
@@ -51,9 +50,11 @@ fn main() {
         .unwrap();
     }
 
+    clear_dir(&cli_scripts_out).expect("clear cli scripts out");
     copy_dir(&repo.join("packages/cli/scripts"), &cli_scripts_out).expect("copy cli scripts");
 
     let cli_dist = repo.join("packages/cli/dist");
+    clear_dir(&cli_dist_out).expect("clear cli dist out");
     if cli_dist.is_dir() {
         copy_dir(&cli_dist, &cli_dist_out).expect("copy cli dist");
     }
@@ -75,6 +76,15 @@ fn dir_is_empty(path: &Path) -> bool {
     fs::read_dir(path)
         .map(|mut it| it.next().is_none())
         .unwrap_or(true)
+}
+
+/// 先清空再创建目录，保证增量编译时 OUT_DIR 不残留历史版本文件
+/// （rust-embed 会把 OUT_DIR 下所有文件嵌入二进制，残留会膨胀体积并让旧 URL 可下载）。
+fn clear_dir(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    fs::create_dir_all(path)
 }
 
 fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {

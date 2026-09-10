@@ -160,12 +160,15 @@ fn arch_name() -> &'static str {
     }
 }
 
+/// 下载文件名带版本号（如 chunsun-cli-darwin-arm64-v0.9.3）：
+/// 每次发版 URL 唯一，CDN 缓存策略无论怎么设都会回源拉取最新产物（cache-busting）。
 fn get_binary_name() -> String {
     let arch = arch_name();
+    let ver = version();
     if cfg!(windows) {
-        format!("chunsun-cli-windows-{arch}.exe")
+        format!("chunsun-cli-windows-{arch}-v{ver}.exe")
     } else {
-        format!("chunsun-cli-{}-{arch}", platform_name())
+        format!("chunsun-cli-{}-{arch}-v{ver}", platform_name())
     }
 }
 
