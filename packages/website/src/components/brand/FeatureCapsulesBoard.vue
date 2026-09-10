@@ -10,6 +10,7 @@ import {
   Bell,
   BellRing,
   BookOpen,
+  Brain,
   Bug,
   Check,
   Compass,
@@ -17,6 +18,7 @@ import {
   GitBranch,
   Hash,
   Key,
+  Library,
   Link,
   Lock,
   MessageCircle,
@@ -191,6 +193,18 @@ const features: FeaturePoint[] = [
     title: "通知偏好",
     line: "交付节点不再石沉大海，收什么自己定，该响的才响。",
     icon: BellRing,
+  },
+  {
+    id: "knowledge-base",
+    title: "知识库",
+    line: "项目知识一级菜单：宪法 + 自定义文档，eager/lazy 按需进 prompt。",
+    icon: Library,
+  },
+  {
+    id: "project-memory",
+    title: "项目级记忆",
+    line: "跨需求填坑 / 经验 / 沉淀，属知识库成员，仅可编辑不可删除。",
+    icon: Brain,
   },
 ];
 

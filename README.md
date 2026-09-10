@@ -10,7 +10,7 @@
 
 <h1 align="center">春笋 · ChunSun</h1>
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v0.5.0-0F6E56" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.9.3-0F6E56" />
   <img alt="lang" src="https://img.shields.io/badge/lang-Rust%20%2F%20Vue-0F6E56" />
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%2F%20Linux%20%2F%20Windows-0F6E56" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green" />
@@ -145,7 +145,9 @@ chunsun step add|list         # 上报/查看执行步骤
 chunsun scenario …            # list | upsert | status                     （验收场景）
 chunsun case …                # list | upsert | status                     （验收用例）
 chunsun requirement memory get|put  # 需求工作记忆（Memory）
-chunsun knowledge [--json]      # 项目知识概览（宪法+自定义文档+需求/环境变量统计）
+chunsun memory get|put        # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）
+chunsun dependency …          # list | schedule | blocked | unlock   （依赖调度）
+chunsun knowledge …           # 概览（--strategy eager|lazy）| doc | index | create | update（项目知识，不支持删除）
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付（/chunsun-fix）
 chunsun env list|get          # 项目环境变量（实时；本地优先，不同步落盘）
