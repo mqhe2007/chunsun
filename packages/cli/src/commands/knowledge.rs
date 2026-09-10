@@ -1,6 +1,6 @@
 use clap::{Args, Subcommand};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 
 use crate::api::ApiClient;
 use crate::commands::{print_json, CmdError, CmdResult};
@@ -27,6 +27,41 @@ enum KnowledgeCommand {
     },
     /// 知识目录（所有文档元信息，不含正文）
     Index,
+    /// 创建知识文档（保持不支持删除）
+    Create {
+        /// 文档标题（必填）
+        #[arg(long)]
+        title: String,
+        /// 文档正文（可选，默认空串）
+        #[arg(long)]
+        content: Option<String>,
+        /// 加载策略 eager / lazy（默认 eager）
+        #[arg(long)]
+        strategy: Option<String>,
+        /// 输出原始 JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// 更新知识文档（至少提供一个字段；保持不支持删除）
+    Update {
+        /// 文档 ID
+        doc_id: String,
+        /// 新标题
+        #[arg(long)]
+        title: Option<String>,
+        /// 新正文
+        #[arg(long)]
+        content: Option<String>,
+        /// 新加载策略 eager / lazy
+        #[arg(long)]
+        strategy: Option<String>,
+        /// 新排序值（向零截断）
+        #[arg(long)]
+        sort_order: Option<i64>,
+        /// 输出原始 JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +77,25 @@ struct KnowledgeData {
     #[serde(default)]
     contexts: Vec<KnowledgeItem>,
     summary: Summary,
+}
+
+/// 创建/更新知识文档的响应（`knowledge_doc_dto` 形状：id/title/content/sortOrder/loadStrategy/updatedAt）。
+#[derive(Debug, Deserialize)]
+struct KnowledgeDocResponse {
+    success: bool,
+    data: Option<KnowledgeDocDto>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeDocDto {
+    id: String,
+    title: String,
+    content: String,
+    sort_order: i64,
+    load_strategy: String,
+    updated_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +182,103 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
         return print_json(&raw);
     }
 
+    // 子命令：创建知识文档（POST /knowledge/documents）
+    if let Some(KnowledgeCommand::Create {
+        title,
+        content,
+        strategy,
+        json,
+    }) = args.command
+    {
+        if let Some(s) = &strategy {
+            if s != "eager" && s != "lazy" {
+                return Err(CmdError::new("--strategy 只能是 eager 或 lazy"));
+            }
+        }
+        let mut body = Map::new();
+        body.insert("title".into(), json!(title));
+        body.insert("content".into(), json!(content.unwrap_or_default()));
+        if let Some(s) = strategy {
+            body.insert("loadStrategy".into(), json!(s));
+        }
+        let result: KnowledgeDocResponse = api.post(
+            &format!("/projects/{}/knowledge/documents", config.project_id),
+            Value::Object(body),
+        )?;
+        if !result.success {
+            return Err(CmdError::new(
+                result.error.unwrap_or_else(|| "创建知识文档失败".into()),
+            ));
+        }
+        let data = result
+            .data
+            .ok_or_else(|| CmdError::new("创建知识文档失败"))?;
+        if json {
+            return print_json(&data);
+        }
+        println!("[chunsun] 知识文档已创建：{}", data.id);
+        println!("  标题：{}", data.title);
+        println!("  加载策略：{}", data.load_strategy);
+        return Ok(());
+    }
+
+    // 子命令：更新知识文档（PUT /knowledge/documents/:docId，至少提供一个字段）
+    if let Some(KnowledgeCommand::Update {
+        doc_id,
+        title,
+        content,
+        strategy,
+        sort_order,
+        json,
+    }) = args.command
+    {
+        if let Some(s) = &strategy {
+            if s != "eager" && s != "lazy" {
+                return Err(CmdError::new("--strategy 只能是 eager 或 lazy"));
+            }
+        }
+        let mut body = Map::new();
+        if let Some(t) = title {
+            body.insert("title".into(), json!(t));
+        }
+        if let Some(c) = content {
+            body.insert("content".into(), json!(c));
+        }
+        if let Some(s) = strategy {
+            body.insert("loadStrategy".into(), json!(s));
+        }
+        if let Some(n) = sort_order {
+            body.insert("sortOrder".into(), json!(n));
+        }
+        if body.is_empty() {
+            return Err(CmdError::new(
+                "请提供至少一个要更新的字段（--title、--content、--strategy 或 --sort-order）",
+            ));
+        }
+        let result: KnowledgeDocResponse = api.put(
+            &format!(
+                "/projects/{}/knowledge/documents/{}",
+                config.project_id, doc_id
+            ),
+            Value::Object(body),
+        )?;
+        if !result.success {
+            return Err(CmdError::new(
+                result.error.unwrap_or_else(|| "更新知识文档失败".into()),
+            ));
+        }
+        let data = result
+            .data
+            .ok_or_else(|| CmdError::new("更新知识文档失败"))?;
+        if json {
+            return print_json(&data);
+        }
+        println!("[chunsun] 知识文档已更新：{}", data.id);
+        println!("  标题：{}", data.title);
+        println!("  加载策略：{}", data.load_strategy);
+        return Ok(());
+    }
+
     // 概览：支持 strategy 过滤
     let mut path = format!("/projects/{}/knowledge", config.project_id);
     if let Some(s) = &args.strategy {
@@ -145,19 +296,13 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
         return print_json(&raw);
     }
 
-    let result: KnowledgeResponse = api.get(&path)?;
-    if !result.success {
-        return Err(CmdError::new(
-            result.error.unwrap_or_else(|| "获取项目知识失败".into()),
-        ));
-    }
-
-    // strategy 过滤时返回的是文档列表形状，不是概览形状
-    if args.strategy.is_some() {
+    // strategy 过滤时返回的是文档列表形状（{contexts:[...]}），不是概览形状，
+    // 必须在本函数用概览形状反序列化之前处理，否则 KnowledgeResponse 解析失败。
+    if let Some(s) = &args.strategy {
         let raw: Value = api.get(&path)?;
         if let Some(d) = raw.get("data").and_then(|v| v.get("contexts")) {
             if let Some(arr) = d.as_array() {
-                println!("知识文档（strategy={}，共 {} 条）：", args.strategy.as_ref().unwrap(), arr.len());
+                println!("知识文档（strategy={s}，共 {} 条）：", arr.len());
                 for item in arr {
                     let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
                     let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("");
@@ -170,6 +315,13 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
             }
         }
         return print_json(&raw);
+    }
+
+    let result: KnowledgeResponse = api.get(&path)?;
+    if !result.success {
+        return Err(CmdError::new(
+            result.error.unwrap_or_else(|| "获取项目知识失败".into()),
+        ));
     }
 
     let data = result
@@ -221,6 +373,9 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
     println!("按策略过滤：chunsun knowledge --strategy eager|lazy");
     println!("知识目录（元信息，不含正文）：chunsun knowledge index");
     println!("单条查询：chunsun knowledge doc <docId|constitution>");
+    println!("创建知识文档：chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]");
+    println!("更新知识文档：chunsun knowledge update <docId> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]");
+    println!("（保持不支持删除知识文档）");
     println!("需求工作记忆：chunsun requirement memory get|put <需求ID>");
     println!("项目级记忆：chunsun memory get|put");
     Ok(())

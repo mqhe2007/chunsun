@@ -288,7 +288,9 @@ chunsun memory get|put                                     # 项目级记忆（�
 chunsun dependency list|schedule                                  # 依赖边 / 全项目调度分析
 chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
 chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析
-chunsun knowledge [--json]
+chunsun knowledge [--json]                                    # 项目知识概览/按策略过滤（--strategy eager|lazy）
+chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]  # 创建知识文档（保持不支持删除）
+chunsun knowledge update <文档ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]  # 更新知识文档（保持不支持删除）
 chunsun reset <需求ID>
 chunsun fix <缺陷ID>
 ```

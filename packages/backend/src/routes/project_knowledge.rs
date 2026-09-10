@@ -57,6 +57,7 @@ pub struct ConstitutionBody {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateKnowledgeBody {
     #[serde(default, deserialize_with = "double_option")]
     pub title: Option<Option<String>>,
