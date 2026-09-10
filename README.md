@@ -69,7 +69,7 @@ pnpm run platform:release -- linux-x64
 - 平台默认端口：**11111**
 - 首次访问路径：**`/console/setup`**
 - 实例配置：可执行文件同级 **`chunsun.json`**
-- CLI 下载包名：`chunsun-cli-{os}-{arch}`（Windows 带 `.exe`），装好后命令仍是 **`chunsun`**
+- CLI 下载包名：`chunsun-cli-{os}-{arch}-v{版本}`（如 `chunsun-cli-darwin-arm64-v0.9.3`，Windows 带 `.exe`），装好后命令仍是 **`chunsun`**
 - **部署范围**：请使用独立域名或端口（`https://host:11111/`），**不支持**挂在反向代理子路径（如 `/chunsun/`）
 
 ### 1. 安装 CLI
