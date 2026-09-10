@@ -14,7 +14,9 @@
     "fe:dev": "node scripts/dev-web.mjs",
     "cli:dist": "bash scripts/build-cli-dist.sh",
     "platform:release": "bash scripts/release-platform.sh",
-    "gen:permissions": "tsx scripts/gen-permissions.ts"
+    "gen:permissions": "tsx scripts/gen-permissions.ts",
+    "version:check": "bash scripts/check-version-consistency.sh",
+    "version:sync": "bash scripts/sync-version.sh"
   },
   "devDependencies": {
     "tsx": "^4.19.0"
