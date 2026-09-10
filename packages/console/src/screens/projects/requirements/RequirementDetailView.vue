@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pencil, Search, Trash2 } from "@lucide/vue";
+import { Eye, Pencil, Search, Trash2 } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -348,10 +348,12 @@ onMounted(async () => {
                 <button
                   v-if="requirement.description.trim()"
                   type="button"
-                  class="btn btn-ghost btn-xs"
+                  class="btn btn-ghost btn-xs btn-square"
+                  aria-label="查看渲染"
+                  title="查看渲染后的描述"
                   @click="previewOpen = true"
                 >
-                  查看渲染
+                  <Eye :size="14" aria-hidden="true" />
                 </button>
               </div>
               <p class="detail-desc">{{ requirement.description }}</p>

@@ -2,6 +2,7 @@
 import {
   CircleCheck,
   CircleQuestionMark,
+  Eye,
   Flag,
   Info,
   Keyboard,
@@ -494,12 +495,12 @@ onMounted(fetchAll);
                 <p class="scenario-desc text-base-content/60">{{ s.description }}</p>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-xs shrink-0"
+                  class="btn btn-ghost btn-xs btn-square shrink-0"
                   aria-label="查看场景描述"
                   title="查看渲染后的场景描述"
                   @click.stop="scenarioPreview = s"
                 >
-                  查看
+                  <Eye :size="14" aria-hidden="true" />
                 </button>
               </div>
               <template v-if="s.cases?.length">

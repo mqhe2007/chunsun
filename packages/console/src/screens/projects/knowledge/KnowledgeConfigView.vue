@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Eye } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
@@ -265,18 +266,18 @@ onMounted(fetchContexts);
           </span>
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="10rem">
+      <AppColumn header="操作" width="9rem">
         <template #default="{ row }">
           <div class="row-actions">
             <button
               v-if="(row as ContextRow).content.trim()"
               type="button"
-              class="btn btn-ghost btn-sm"
+              class="btn btn-ghost btn-sm btn-square"
               aria-label="查看正文"
               title="查看渲染后的正文"
               @click="previewRow = row as ContextRow"
             >
-              查看
+              <Eye :size="16" aria-hidden="true" />
             </button>
             <button
               type="button"

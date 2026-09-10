@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLink } from "@lucide/vue";
+import { ExternalLink, Eye } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -354,17 +354,18 @@ onMounted(async () => {
           {{ new Date((row as DefectRow).updatedAt).toLocaleDateString() }}
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="20rem">
+      <AppColumn header="操作" width="18rem">
         <template #default="{ row }">
           <div class="row-actions">
             <button
               v-if="(row as DefectRow).description?.trim()"
               type="button"
-              class="btn btn-ghost btn-sm"
+              class="btn btn-ghost btn-sm btn-square"
+              aria-label="查看"
               title="查看渲染后的描述"
               @click="previewRow = row as DefectRow"
             >
-              查看
+              <Eye :size="16" aria-hidden="true" />
             </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDetail(row as DefectRow)">
               详情
@@ -440,10 +441,12 @@ onMounted(async () => {
             <button
               v-if="selected.description?.trim()"
               type="button"
-              class="btn btn-ghost btn-xs"
+              class="btn btn-ghost btn-xs btn-square"
+              aria-label="查看渲染"
+              title="查看渲染后的描述"
               @click="previewRow = selected"
             >
-              查看渲染
+              <Eye :size="14" aria-hidden="true" />
             </button>
           </div>
           <p v-if="selected.description" class="detail-desc">{{ selected.description }}</p>
