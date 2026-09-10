@@ -1,0 +1,97 @@
+/*
+ * markdown-body：项目内所有 markdown-it 渲染内容的共享排版。
+ * 来源：RequirementHarnessSection.vue（原 scoped 样式提取为全局，供抽屉/内联复用）。
+ * 使用方给 v-html 容器加 class="markdown-body" 即可。
+ */
+.markdown-body {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--color-base-content);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin: 1rem 0 0.5rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.markdown-body h1 { font-size: 1.15rem; }
+.markdown-body h2 { font-size: 1.05rem; }
+.markdown-body h3 { font-size: 0.95rem; }
+
+.markdown-body p {
+  margin: 0.5rem 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.5rem 0;
+  padding-left: 1.4rem;
+}
+
+.markdown-body li {
+  margin: 0.2rem 0;
+}
+
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8em;
+  background: var(--color-base-200);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.markdown-body pre {
+  margin: 0.6rem 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 8px;
+  background: var(--color-base-200);
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-body blockquote {
+  margin: 0.5rem 0;
+  padding: 0.3rem 0.8rem;
+  border-left: 3px solid var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.82rem;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--color-base-300);
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--color-base-200);
+  font-weight: 600;
+}
+
+.markdown-body a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-base-300);
+  margin: 0.8rem 0;
+}
