@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ExternalLink } from "@lucide/vue";
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   AppColumn,
@@ -19,6 +19,7 @@ import {
   DEFECT_STATUS_LABEL,
 } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import DependencySection from "@/components/projects/DependencySection.vue";
 import NodePicker, { type PickedNode } from "@/components/projects/NodePicker.vue";
@@ -56,6 +57,13 @@ const showForm = ref(false);
 const showDetail = ref(false);
 const selected = ref<DefectRow | null>(null);
 const editing = ref<DefectRow | null>(null);
+const previewRow = ref<DefectRow | null>(null);
+const previewOpen = computed({
+  get: () => previewRow.value !== null,
+  set: (v: boolean) => {
+    if (!v) previewRow.value = null;
+  },
+});
 const form = ref({
   description: "",
   status: "open",
@@ -346,9 +354,18 @@ onMounted(async () => {
           {{ new Date((row as DefectRow).updatedAt).toLocaleDateString() }}
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="17rem">
+      <AppColumn header="操作" width="20rem">
         <template #default="{ row }">
           <div class="row-actions">
+            <button
+              v-if="(row as DefectRow).description?.trim()"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              title="查看渲染后的描述"
+              @click="previewRow = row as DefectRow"
+            >
+              查看
+            </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDetail(row as DefectRow)">
               详情
             </button>
@@ -418,7 +435,17 @@ onMounted(async () => {
           />
         </div>
         <div class="full">
-          <span class="detail-label">描述 / 复现步骤</span>
+          <div class="detail-label-row">
+            <span class="detail-label">描述 / 复现步骤</span>
+            <button
+              v-if="selected.description?.trim()"
+              type="button"
+              class="btn btn-ghost btn-xs"
+              @click="previewRow = selected"
+            >
+              查看渲染
+            </button>
+          </div>
           <p v-if="selected.description" class="detail-desc">{{ selected.description }}</p>
           <span v-else class="text-base-content/60">—</span>
         </div>
@@ -474,6 +501,12 @@ onMounted(async () => {
         </button>
       </template>
     </AppModal>
+
+    <MarkdownDrawer
+      v-model="previewOpen"
+      :title="`缺陷 ${previewRow?.id ?? ''} · 描述`"
+      :content="previewRow?.description"
+    />
   </AppPage>
 </template>
 
@@ -531,6 +564,17 @@ onMounted(async () => {
   font-size: 0.75rem;
   color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
   margin-bottom: 0.25rem;
+}
+
+.detail-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.detail-label-row .detail-label {
+  margin-bottom: 0;
 }
 
 .detail-desc {

@@ -10,6 +10,7 @@ import {
   confirm,
   useToast,
 } from "@/ui";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import { api } from "@/utils/api";
 
 const CONSTITUTION_KEY = "constitution";
@@ -46,6 +47,13 @@ const saving = ref(false);
 const contexts = ref<ContextItem[]>([]);
 
 const dialogOpen = ref(false);
+const previewRow = ref<ContextRow | null>(null);
+const previewOpen = computed({
+  get: () => previewRow.value !== null,
+  set: (v: boolean) => {
+    if (!v) previewRow.value = null;
+  },
+});
 /** null = 新建自定义；constitution / id = 编辑 */
 const editingKey = ref<string | null>(null);
 const formTitle = ref("");
@@ -257,9 +265,19 @@ onMounted(fetchContexts);
           </span>
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="7rem">
+      <AppColumn header="操作" width="10rem">
         <template #default="{ row }">
           <div class="row-actions">
+            <button
+              v-if="(row as ContextRow).content.trim()"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              aria-label="查看正文"
+              title="查看渲染后的正文"
+              @click="previewRow = row as ContextRow"
+            >
+              查看
+            </button>
             <button
               type="button"
               class="btn btn-ghost btn-sm btn-square"
@@ -344,6 +362,12 @@ onMounted(fetchContexts);
         </button>
       </template>
     </AppModal>
+
+    <MarkdownDrawer
+      v-model="previewOpen"
+      :title="`${previewRow?.title ?? '文档'} · 正文`"
+      :content="previewRow?.content"
+    />
   </AppPage>
 </template>
 

@@ -16,6 +16,7 @@ import { REQUIREMENT_STATUS_LABEL } from "@/utils/workflow";
 import RequirementHarnessSection from "@/components/projects/RequirementHarnessSection.vue";
 import DependencySection from "@/components/projects/DependencySection.vue";
 import CopyableValue from "@/components/common/CopyableValue.vue";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 
 type Requirement = {
   id: string;
@@ -59,6 +60,7 @@ const notFound = ref(false);
 const requirement = ref<Requirement | null>(null);
 const members = ref<ProjectMemberBrief[]>([]);
 const showForm = ref(false);
+const previewOpen = ref(false);
 const form = ref({
   description: "",
   ownerId: "" as string,
@@ -341,7 +343,17 @@ onMounted(async () => {
               }}</span>
             </div>
             <div class="full">
-              <span class="detail-label">描述</span>
+              <div class="detail-label-row">
+                <span class="detail-label">描述</span>
+                <button
+                  v-if="requirement.description.trim()"
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  @click="previewOpen = true"
+                >
+                  查看渲染
+                </button>
+              </div>
               <p class="detail-desc">{{ requirement.description }}</p>
             </div>
           </div>
@@ -395,6 +407,12 @@ onMounted(async () => {
         </button>
       </template>
     </AppDrawer>
+
+    <MarkdownDrawer
+      v-model="previewOpen"
+      :title="`需求 ${requirement?.id ?? ''} · 描述`"
+      :content="requirement?.description"
+    />
   </AppPage>
 </template>
 
@@ -465,6 +483,17 @@ onMounted(async () => {
   font-size: 0.75rem;
   color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
   margin-bottom: 0.25rem;
+}
+
+.detail-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.detail-label-row .detail-label {
+  margin-bottom: 0;
 }
 
 .detail-value {
