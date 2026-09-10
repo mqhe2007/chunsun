@@ -9,16 +9,13 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "@lucide/vue";
-import MarkdownIt from "markdown-it";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import { api } from "@/utils/api";
+import { renderMarkdown } from "@/utils/markdown";
 
-const md = new MarkdownIt({
-  html: false,
-  linkify: true,
-  typographer: false,
-});
+const md = renderMarkdown;
 
 type Run = {
   id: string;
@@ -74,6 +71,13 @@ const scenarios = ref<Scenario[]>([]);
 const context = ref<ContextRow | null>(null);
 const expandedRun = ref<string | null>(null);
 const memoryExpanded = ref(false);
+const scenarioPreview = ref<Scenario | null>(null);
+const scenarioPreviewOpen = computed({
+  get: () => scenarioPreview.value !== null,
+  set: (v: boolean) => {
+    if (!v) scenarioPreview.value = null;
+  },
+});
 const stepsByRun = ref<Record<string, Step[]>>({});
 const stepsLoading = ref<Record<string, boolean>>({});
 
@@ -135,7 +139,7 @@ const scenarioPassingCount = computed(
 const renderedMemory = computed(() => {
   const text = context.value?.snapshot;
   if (!text || !text.trim()) return "";
-  return md.render(text);
+  return renderMarkdown(text);
 });
 
 const latestRunLabel = computed(() => {
@@ -486,9 +490,18 @@ onMounted(fetchAll);
             </div>
 
             <template v-if="isScenarioOpen(s)">
-              <p v-if="s.description" class="scenario-desc text-base-content/60">
-                {{ s.description }}
-              </p>
+              <div v-if="s.description" class="scenario-desc-row">
+                <p class="scenario-desc text-base-content/60">{{ s.description }}</p>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs shrink-0"
+                  aria-label="查看场景描述"
+                  title="查看渲染后的场景描述"
+                  @click.stop="scenarioPreview = s"
+                >
+                  查看
+                </button>
+              </div>
               <template v-if="s.cases?.length">
                 <ul class="case-list">
                   <li v-for="c in visibleCases(s)" :key="c.id" class="case-item">
@@ -517,6 +530,12 @@ onMounted(fetchAll);
       </section>
     </div>
   </div>
+
+  <MarkdownDrawer
+    v-model="scenarioPreviewOpen"
+    :title="`场景 ${scenarioPreview?.key ?? ''} · 描述`"
+    :content="scenarioPreview?.description"
+  />
 </template>
 
 <style scoped>
@@ -883,6 +902,17 @@ onMounted(fetchAll);
   line-height: 1.4;
 }
 
+.scenario-desc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.scenario-desc-row .scenario-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .case-progress {
   display: grid;
   gap: 0.3rem;
@@ -939,92 +969,6 @@ onMounted(fetchAll);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
-
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3) {
-  margin: 1rem 0 0.5rem;
-  font-weight: 650;
-  line-height: 1.3;
-}
-
-.markdown-body :deep(h1) { font-size: 1.15rem; }
-.markdown-body :deep(h2) { font-size: 1.05rem; }
-.markdown-body :deep(h3) { font-size: 0.95rem; }
-
-.markdown-body :deep(p) {
-  margin: 0.5rem 0;
-}
-
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) {
-  margin: 0.5rem 0;
-  padding-left: 1.4rem;
-}
-
-.markdown-body :deep(li) {
-  margin: 0.2rem 0;
-}
-
-.markdown-body :deep(code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.8em;
-  background: var(--color-base-200);
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-}
-
-.markdown-body :deep(pre) {
-  margin: 0.6rem 0;
-  padding: 0.65rem 0.8rem;
-  border-radius: 8px;
-  background: var(--color-base-200);
-  overflow-x: auto;
-}
-
-.markdown-body :deep(pre code) {
-  background: none;
-  padding: 0;
-}
-
-.markdown-body :deep(blockquote) {
-  margin: 0.5rem 0;
-  padding: 0.3rem 0.8rem;
-  border-left: 3px solid var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
-  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
-}
-
-.markdown-body :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0.6rem 0;
-  font-size: 0.82rem;
-}
-
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  border: 1px solid var(--color-base-300);
-  padding: 0.35rem 0.55rem;
-  text-align: left;
-}
-
-.markdown-body :deep(th) {
-  background: var(--color-base-200);
-  font-weight: 600;
-}
-
-.markdown-body :deep(a) {
-  color: var(--color-primary);
-  text-decoration: underline;
-}
-
-.markdown-body :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--color-base-300);
-  margin: 0.8rem 0;
-}
-
 
 @media (max-width: 960px) {
   .harness-main {

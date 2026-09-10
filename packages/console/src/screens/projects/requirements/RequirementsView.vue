@@ -17,6 +17,7 @@ import {
 import { api } from "@/utils/api";
 import { REQUIREMENT_STATUS_LABEL } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import NodePicker, { type PickedNode } from "@/components/projects/NodePicker.vue";
 import RequirementsBoard from "./RequirementsBoard.vue";
@@ -67,6 +68,13 @@ const showForm = ref(false);
 const editing = ref<Requirement | null>(null);
 const viewMode = ref<RequirementViewMode>("list");
 const boardReloadToken = ref(0);
+const previewRow = ref<Requirement | null>(null);
+const previewOpen = computed({
+  get: () => previewRow.value !== null,
+  set: (v: boolean) => {
+    if (!v) previewRow.value = null;
+  },
+});
 
 const form = ref({
   description: "",
@@ -435,9 +443,18 @@ onMounted(async () => {
           {{ new Date((row as Requirement).updatedAt).toLocaleDateString() }}
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="13rem">
+      <AppColumn header="操作" width="16rem">
         <template #default="{ row }">
           <div class="row-actions" @click.stop>
+            <button
+              v-if="(row as Requirement).description.trim()"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              title="查看渲染后的描述"
+              @click="previewRow = row as Requirement"
+            >
+              查看
+            </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDetail(row as Requirement)">
               详情
             </button>
@@ -487,6 +504,12 @@ onMounted(async () => {
         </button>
       </template>
     </AppDrawer>
+
+    <MarkdownDrawer
+      v-model="previewOpen"
+      :title="`需求 ${previewRow?.id ?? ''} · 描述`"
+      :content="previewRow?.description"
+    />
   </AppPage>
 </template>
 

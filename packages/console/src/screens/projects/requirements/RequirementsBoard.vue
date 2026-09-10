@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Pencil, Trash2 } from "@lucide/vue";
-import { onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import CopyableValue from "@/components/common/CopyableValue.vue";
+import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { api } from "@/utils/api";
 import { useToast } from "@/ui";
@@ -53,6 +54,14 @@ const emit = defineEmits<{
 }>();
 
 const toast = useToast();
+
+const previewRow = ref<BoardRequirement | null>(null);
+const previewOpen = computed({
+  get: () => previewRow.value !== null,
+  set: (v: boolean) => {
+    if (!v) previewRow.value = null;
+  },
+});
 
 function emptyColumns(): Record<BoardStatus, ColumnState> {
   return {
@@ -256,7 +265,21 @@ onUnmounted(() => {
                 被阻塞
               </span>
             </div>
-            <p class="req-card-desc" :title="row.description">{{ row.description }}</p>
+            <div class="flex items-center gap-1">
+              <p class="req-card-desc" :title="row.description">{{ row.description }}</p>
+              <span
+                v-if="row.description.trim()"
+                role="button"
+                tabindex="0"
+                class="btn btn-ghost btn-xs shrink-0"
+                aria-label="查看描述"
+                title="查看渲染后的描述"
+                @click.stop="previewRow = row"
+                @keydown.enter.stop="previewRow = row"
+              >
+                查看
+              </span>
+            </div>
             <div class="flex items-center gap-2 text-xs text-base-content/60">
               <span v-if="row.owner" class="inline-flex min-w-0 items-center gap-1">
                 <UserAvatar :qq="row.owner.qq" :size="18" />
@@ -300,6 +323,12 @@ onUnmounted(() => {
       </div>
     </section>
   </div>
+
+  <MarkdownDrawer
+    v-model="previewOpen"
+    :title="`需求 ${previewRow?.id ?? ''} · 描述`"
+    :content="previewRow?.description"
+  />
 </template>
 
 <style scoped>
@@ -373,6 +402,8 @@ onUnmounted(() => {
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.45;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .req-id {

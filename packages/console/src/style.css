@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@chunsun/web-shared/tokens.css";
+@import "./assets/markdown.css";
 
 /* daisyUI 仅作用于控制台 / 认证 / 安装等 .app-ui 容器 */
 @plugin "daisyui" {
