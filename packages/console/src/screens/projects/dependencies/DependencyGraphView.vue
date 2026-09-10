@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import {
+  Copy,
   Download,
+  ExternalLink,
   Filter,
   Maximize2,
   RefreshCw,
   Search,
+  X,
   ZoomIn,
   ZoomOut,
 } from "@lucide/vue";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   VueFlow,
@@ -81,6 +84,13 @@ const showOnlyBlocked = ref(false);
 const selectedNodeId = ref<string | null>(null);
 const highlightChain = ref<Set<string>>(new Set());
 
+// 节点右键菜单
+const contextMenu = ref<{ visible: boolean; x: number; y: number }>({
+  visible: false,
+  x: 0,
+  y: 0,
+});
+
 const { fitView, zoomIn, zoomOut, project } = useVueFlow();
 
 // ── 计算属性 ──────────────────────────────────────────────
@@ -102,6 +112,10 @@ const allNodes = computed<GraphNode[]>(() => {
   }));
   return [...reqNodes, ...defectNodes];
 });
+
+const selectedNode = computed(() =>
+  selectedNodeId.value ? allNodes.value.find(n => n.id === selectedNodeId.value) || null : null,
+);
 
 /** 被阻塞的节点 ID 集合：有未完成的前置依赖 */
 const blockedNodeIds = computed<Set<string>>(() => {
@@ -344,6 +358,52 @@ function goToDetail() {
   }
 }
 
+// ── 节点右键菜单 ──────────────────────────────────────────
+function onNodeContextMenu(event: { event: MouseEvent; node: Node }) {
+  event.event.preventDefault();
+  const nodeId = (event.node as { id: string }).id;
+  selectedNodeId.value = nodeId;
+  if (blockedNodeIds.value.has(nodeId)) {
+    highlightChain.value = computeBlockChain(nodeId);
+  } else {
+    highlightChain.value = new Set();
+  }
+
+  const container = document.querySelector(".dep-graph-container") as HTMLElement | null;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const menuW = 180;
+  const menuH = 210;
+  let x = event.event.clientX - rect.left;
+  let y = event.event.clientY - rect.top;
+  if (x + menuW > rect.width) x = Math.max(8, rect.width - menuW - 8);
+  if (y + menuH > rect.height) y = Math.max(8, rect.height - menuH - 8);
+  contextMenu.value = { visible: true, x, y };
+}
+
+function closeContextMenu() {
+  contextMenu.value.visible = false;
+}
+
+function copyNodeId() {
+  if (!selectedNodeId.value) return;
+  navigator.clipboard
+    .writeText(selectedNodeId.value)
+    .then(() => toast.success("已复制", "节点 ID 已复制到剪贴板"))
+    .catch(() => toast.error("复制失败", "无法访问剪贴板"));
+  closeContextMenu();
+}
+
+function deselectNode() {
+  selectedNodeId.value = null;
+  highlightChain.value = new Set();
+  closeContextMenu();
+}
+
+function onEscape(e: KeyboardEvent) {
+  if (e.key === "Escape") closeContextMenu();
+}
+
 // ── 导出 ──────────────────────────────────────────────────
 async function exportPNG() {
   const vueFlowEl = document.querySelector(".vue-flow") as HTMLElement;
@@ -420,6 +480,11 @@ const stats = computed(() => ({
 // ── 生命周期 ──────────────────────────────────────────────
 onMounted(() => {
   void fetchAll();
+  window.addEventListener("keydown", onEscape);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onEscape);
 });
 
 watch(
@@ -486,47 +551,6 @@ watch(
       </div>
     </div>
 
-    <!-- 图例 -->
-    <div class="mb-3 flex flex-wrap items-center gap-4 text-xs text-base-content/60">
-      <div class="flex items-center gap-1.5">
-        <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #a3ab96" />
-        待处理
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #2563eb" />
-        进行中
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #15803d" />
-        已完成
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="inline-block h-2.5 w-2.5 rounded-full border-2 border-error" style="background: transparent" />
-        被阻塞
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="inline-block h-0.5 w-6" style="background: #d97706" />
-        关键路径
-      </div>
-    </div>
-
-    <!-- 选中节点信息条 -->
-    <div
-      v-if="selectedNodeId"
-      class="mb-3 flex items-center gap-3 rounded-lg bg-base-200 px-3 py-2 text-sm"
-    >
-      <span class="font-mono text-xs">{{ selectedNodeId }}</span>
-      <button type="button" class="btn btn-ghost btn-xs" @click="goToDetail">
-        查看详情
-      </button>
-      <button type="button" class="btn btn-ghost btn-xs" @click="selectedNodeId = null; highlightChain = new Set()">
-        取消选中
-      </button>
-      <span v-if="highlightChain.size > 1" class="ml-auto text-xs text-info">
-        阻塞链路：{{ highlightChain.size }} 个节点
-      </span>
-    </div>
-
     <!-- 图形容器 -->
     <div class="dep-graph-container relative min-h-0 flex-1 overflow-hidden rounded-xl border border-base-300">
       <div v-if="loading" class="absolute inset-0 z-10 flex items-center justify-center bg-base-100/80">
@@ -549,6 +573,7 @@ watch(
         :default-edge-options="{ type: 'smoothstep' }"
         class="dep-graph"
         @node-click="onNodeClick"
+        @node-contextmenu="onNodeContextMenu"
         @pane-click="onPaneClick"
       >
         <Background :gap="20" :size="1" :variant="BackgroundVariant.Dots" />
@@ -570,6 +595,66 @@ watch(
           zoomable
         />
       </VueFlow>
+
+      <!-- 悬浮图例（左下角） -->
+      <div v-if="allNodes.length > 0" class="dep-legend-float">
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #a3ab96" />
+          待处理
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #2563eb" />
+          进行中
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block h-2.5 w-2.5 rounded-full" style="background: #15803d" />
+          已完成
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block h-2.5 w-2.5 rounded-full border-2 border-error" style="background: transparent" />
+          被阻塞
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block h-0.5 w-6" style="background: #d97706" />
+          关键路径
+        </div>
+      </div>
+
+      <!-- 节点右键菜单 -->
+      <div
+        v-if="contextMenu.visible"
+        class="dep-context-backdrop"
+        @click="closeContextMenu"
+        @contextmenu.prevent="closeContextMenu"
+      >
+        <div
+          class="dep-context-menu"
+          :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+          @click.stop
+          @contextmenu.prevent
+        >
+          <div class="dep-context-header">
+            <span class="dep-context-kind">{{ selectedNode?.kind === "defect" ? "缺陷" : "需求" }}</span>
+            <span class="dep-context-id">{{ selectedNodeId }}</span>
+          </div>
+          <div v-if="selectedNode?.label" class="dep-context-title">{{ selectedNode.label }}</div>
+          <button type="button" class="dep-context-item" @click="goToDetail(); closeContextMenu()">
+            <ExternalLink :size="14" />
+            查看详情
+          </button>
+          <button type="button" class="dep-context-item" @click="copyNodeId">
+            <Copy :size="14" />
+            复制 ID
+          </button>
+          <button type="button" class="dep-context-item dep-context-item--danger" @click="deselectNode">
+            <X :size="14" />
+            取消选中
+          </button>
+          <div v-if="highlightChain.size > 1" class="dep-context-footer">
+            阻塞链路：{{ highlightChain.size }} 个节点
+          </div>
+        </div>
+      </div>
     </div>
   </AppPage>
 </template>
@@ -617,5 +702,120 @@ watch(
 
 :deep(.vue-flow__edge-path) {
   stroke-width: 1.5;
+}
+
+/* 悬浮图例（左下角） */
+.dep-legend-float {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-base-content);
+  background: var(--color-base-100);
+  border: 1px solid var(--color-base-300);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  max-width: calc(100% - 24px);
+}
+
+/* 节点右键菜单 */
+.dep-context-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+
+.dep-context-menu {
+  position: absolute;
+  z-index: 50;
+  min-width: 170px;
+  padding: 6px;
+  background: var(--color-base-100);
+  border: 1px solid var(--color-base-300);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  color: var(--color-base-content);
+}
+
+.dep-context-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 5px;
+  border-bottom: 1px solid var(--color-base-300);
+  margin-bottom: 4px;
+}
+
+.dep-context-kind {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-base-200);
+  color: var(--color-base-content);
+  flex-shrink: 0;
+}
+
+.dep-context-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--color-base-content);
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-context-title {
+  padding: 0 8px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-base-content);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.3;
+  border-bottom: 1px solid var(--color-base-300);
+  margin-bottom: 4px;
+}
+
+.dep-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-base-content);
+  cursor: pointer;
+  text-align: left;
+}
+
+.dep-context-item:hover {
+  background: var(--color-base-200);
+}
+
+.dep-context-item--danger {
+  color: #dc2626;
+}
+
+.dep-context-footer {
+  margin-top: 4px;
+  padding: 5px 8px 3px;
+  border-top: 1px solid var(--color-base-300);
+  font-size: 11px;
+  color: #2563eb;
 }
 </style>
