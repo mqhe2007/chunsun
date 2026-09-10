@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Columns3, LayoutList } from "@lucide/vue";
+import { Columns3, Eye, LayoutList } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -443,17 +443,18 @@ onMounted(async () => {
           {{ new Date((row as Requirement).updatedAt).toLocaleDateString() }}
         </template>
       </AppColumn>
-      <AppColumn header="操作" width="16rem">
+      <AppColumn header="操作" width="14rem">
         <template #default="{ row }">
           <div class="row-actions" @click.stop>
             <button
               v-if="(row as Requirement).description.trim()"
               type="button"
-              class="btn btn-ghost btn-sm"
+              class="btn btn-ghost btn-sm btn-square"
+              aria-label="查看"
               title="查看渲染后的描述"
               @click="previewRow = row as Requirement"
             >
-              查看
+              <Eye :size="16" aria-hidden="true" />
             </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDetail(row as Requirement)">
               详情

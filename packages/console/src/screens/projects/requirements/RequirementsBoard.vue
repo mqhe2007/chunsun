@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pencil, Trash2 } from "@lucide/vue";
+import { Eye, Pencil, Trash2 } from "@lucide/vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import CopyableValue from "@/components/common/CopyableValue.vue";
 import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
@@ -271,13 +271,13 @@ onUnmounted(() => {
                 v-if="row.description.trim()"
                 role="button"
                 tabindex="0"
-                class="btn btn-ghost btn-xs shrink-0"
+                class="btn btn-ghost btn-xs btn-square shrink-0"
                 aria-label="查看描述"
                 title="查看渲染后的描述"
                 @click.stop="previewRow = row"
                 @keydown.enter.stop="previewRow = row"
               >
-                查看
+                <Eye :size="14" aria-hidden="true" />
               </span>
             </div>
             <div class="flex items-center gap-2 text-xs text-base-content/60">
