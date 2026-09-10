@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 以根 package.json 为唯一来源，将版本号同步到所有 Rust crate 的 Cargo.toml。
+# 以根 package.json 为唯一来源，将版本号同步到所有 Rust crate 的 Cargo.toml 与 README 版本徽章。
 # 也可先指定新版本号（会同时更新 package.json），再一键同步。
 #
 # 用法:
-#   pnpm run version:sync            # 同步当前 package.json 的版本号到各 Cargo.toml
+#   pnpm run version:sync            # 同步当前 package.json 的版本号到各 Cargo.toml 与 README 徽章
 #   pnpm run version:sync -- 1.0.0   # 先把版本号改为 1.0.0，再同步
 set -euo pipefail
 
@@ -75,6 +75,33 @@ echo "[version:sync] 同步 Cargo.toml:"
 for manifest in "${CARGO_MANIFESTS[@]}"; do
   update_cargo_version "$manifest" "$PKG_VERSION"
 done
+
+# 同步 README 版本徽章（badge 中 version-v<版本> 为唯一出现处）
+update_readme_badge() {
+  local readme="$1"
+  local version="$2"
+
+  if [[ ! -f "$readme" ]]; then
+    echo "  ⚠️  跳过（文件不存在）: $readme"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  sed -E "s/version-v[0-9][0-9.]*/version-v${version}/g" "$readme" > "$tmp"
+
+  if ! diff -q "$readme" "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$readme"
+    echo "  ✅ $readme"
+  else
+    rm "$tmp"
+    echo "  ⏭️  $readme（徽章已是 v${version}）"
+  fi
+}
+
+echo ""
+echo "[version:sync] 同步 README 徽章:"
+update_readme_badge "$ROOT/README.md" "$PKG_VERSION"
 
 echo ""
 echo "[version:sync] 完成。校验结果:"

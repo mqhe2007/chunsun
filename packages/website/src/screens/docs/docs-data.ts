@@ -465,20 +465,25 @@ export const docCategories: DocCategory[] = [
         blocks: [
           {
             t: "p",
-            text: "每个需求都有一份工作记忆（Memory），由平台保存、CLI 增量维护。它是唯一进 Agent 上下文的记忆源，也是断点续跑的关键。",
+            text: "每个需求都有一份工作记忆（Memory），由平台保存、CLI 维护。它是唯一进 Agent 上下文的记忆源，也是断点续跑的关键。工作记忆是自由 Markdown 文本，写回走「拉取-修改-全量覆盖」：memory get 拉取 → 本地修改 → put --snapshot 全量写回。",
           },
           {
             t: "h2",
             text: "里面存什么",
           },
           {
+            t: "p",
+            text: "工作记忆为自由 Markdown，由 Agent 按需组织章节（可增删），常见章节如下；整体不超过 10k 字符，接近上限时主动精简旧内容。",
+          },
+          {
             t: "ul",
             items: [
-              "requirementSnapshot：已澄清的需求边界（重来保留）。",
-              "lastRunSummary：上一轮的决策链与结果。",
-              "openDecisions：待你确认的点。",
-              "codeLandmarks：关键代码位置与摘要（不存代码本体）。",
-              "envRefs：引用的环境变量 key。",
+              "需求边界：已澄清的范围、目标、约束（重来保留）。",
+              "待决策：等待你确认的决策项与选项背景。",
+              "代码标记：关键代码位置与摘要（不存代码本体）。",
+              "环境变量：引用的环境变量 key。",
+              "阻塞原因：被前置任务阻塞时，记录原因与未完成前置列表。",
+              "本轮总结：做了什么 / 关键决策与理由 / 结果 / 下一步建议。",
             ],
           },
           {
@@ -539,7 +544,7 @@ export const docCategories: DocCategory[] = [
     key: "guides",
     label: "功能指南",
     icon: "book-open",
-    desc: "平台各功能的用法：项目、需求、缺陷、设置、通知、账户与后台。",
+    desc: "平台各功能的用法：项目、需求、缺陷、依赖、知识库、设置、通知、账户与后台。",
     docs: [
       {
         slug: "projects",
@@ -691,7 +696,7 @@ export const docCategories: DocCategory[] = [
           },
           {
             t: "p",
-            text: "项目级自定义知识文档，作为全局背景注入 Agent；与需求级工作记忆（Memory）是两层不同机制。",
+            text: "项目级自定义知识文档，作为全局背景注入 Agent；与需求级工作记忆（Memory）是两层不同机制。加载策略与 CLI 用法详见「知识库」指南。",
           },
         ],
       },
@@ -790,6 +795,185 @@ export const docCategories: DocCategory[] = [
           },
         ],
       },
+      {
+        slug: "dependencies",
+        title: "依赖关系与调度",
+        icon: "link",
+        desc: "需求/缺陷之间谁卡谁：DAG 自动推导，Agent 执行前检查、完成后解锁。",
+        blocks: [
+          {
+            t: "p",
+            text: "需求与缺陷之间可以建立依赖关系（Blocking / Blocked By），平台以 DAG（有向无环图）自动推导全项目的依赖拓扑。依赖边方向为「source blocks target」：source 未完成，target 不能开始。",
+          },
+          {
+            t: "h2",
+            text: "建立依赖",
+          },
+          {
+            t: "ul",
+            items: [
+              "创建需求/缺陷时在表单中选择 Blocked By（可多选），被选中的节点成为前置。",
+              "依赖关系在项目「依赖图」页以 DAG 拓扑展示，节点按状态着色，被阻塞节点有特殊标识。",
+            ],
+          },
+          {
+            t: "h2",
+            text: "阻塞判定",
+          },
+          {
+            t: "ul",
+            items: [
+              "被阻塞：存在任一未完成的前置（Blocked By 中有非完成节点），不进入执行队列。",
+              "可执行：所有直接前置均已完成。",
+              "完成判定：需求 completed；缺陷 resolved / closed。",
+            ],
+          },
+          {
+            t: "h2",
+            text: "Agent 调度",
+          },
+          {
+            t: "p",
+            text: "Agent 在执行任何需求/缺陷前都会做依赖检查（dependency blocked）：",
+          },
+          {
+            t: "ul",
+            items: [
+              "被阻塞 → 不进入执行队列，把阻塞原因与前置列表写入工作记忆，本轮正常收尾（finished），等待前置完成后再次触发。",
+              "未阻塞 → 进入自主交付循环。",
+              "交付完成 → 做解锁分析（dependency unlock），将下游解锁结果写入工作记忆，提醒下游可进入执行。",
+            ],
+          },
+          {
+            t: "h2",
+            text: "查看依赖",
+          },
+          {
+            t: "code",
+            lang: "bash",
+            code: `chunsun dependency list                                     # 项目内全部依赖边
+chunsun dependency schedule                                 # 拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合
+chunsun dependency blocked <requirement|defect> <ID>        # 单节点是否被阻塞 + 原因
+chunsun dependency unlock <requirement|defect> <ID>         # 模拟节点完成后下游解锁分析`,
+          },
+          {
+            t: "note",
+            kind: "info",
+            text: "schedule 输出全项目拓扑分层（同层可并行、层间串行）、关键路径与可执行集合，用于识别瓶颈、优先推进。",
+          },
+        ],
+      },
+      {
+        slug: "knowledge",
+        title: "知识库",
+        icon: "book-open",
+        desc: "项目级知识文档（宪法 + 自定义）：eager/lazy 渐进式加载，CLI 可查可建可改。",
+        blocks: [
+          {
+            t: "p",
+            text: "知识库是项目一级功能菜单，保存项目级知识文档：系统固定的「项目宪法」与「项目记忆」，以及项目自定义文档（如产品设计、部署流程）。",
+          },
+          {
+            t: "h2",
+            text: "加载策略",
+          },
+          {
+            t: "ul",
+            items: [
+              "eager（默认）：harness 启动时全量加载进 prompt，适合核心规则、编码规范等每次都需要的内容。",
+              "lazy：启动时不加载正文，由 Agent 在循环中判断需要后单条拉取，适合参考资料、API 文档等不常用但可能较长的文档。",
+              "宪法恒为 eager，不可改为 lazy。",
+            ],
+          },
+          {
+            t: "note",
+            kind: "info",
+            text: "启动时还会加载「知识目录」（所有文档的 key / title / 加载策略，不含正文），Agent 据此感知有哪些 lazy 文档可按需拉取。",
+          },
+          {
+            t: "h2",
+            text: "CLI 命令",
+          },
+          {
+            t: "code",
+            lang: "bash",
+            code: `chunsun knowledge [--json]                          # 项目知识概览（--strategy eager|lazy 过滤）
+chunsun knowledge index                             # 知识目录（元信息，不含正文）
+chunsun knowledge doc <ID>                          # 单条查询正文（文档 ID 或 constitution）
+chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]
+chunsun knowledge update <ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]`,
+          },
+          {
+            t: "note",
+            kind: "warn",
+            text: "知识文档保持不支持删除，仅可创建与更新。",
+          },
+          {
+            t: "h2",
+            text: "与工作记忆的区分",
+          },
+          {
+            t: "ul",
+            items: [
+              "需求工作记忆：单个需求断点续跑必需，存需求级上下文。",
+              "项目记忆：跨需求复用的填坑/经验/沉淀，属知识库成员（key=memory），恒 eager。",
+              "场景/用例唯一真相仍在平台表，知识库与记忆都不存镜像。",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "project-memory",
+        title: "项目级记忆",
+        icon: "database",
+        desc: "跨需求复用的填坑、经验与沉淀：一次踩坑，值得其他需求也看到。",
+        blocks: [
+          {
+            t: "p",
+            text: "需求级「工作记忆」管单个需求的断点续跑；项目级记忆管跨需求复用的填坑、经验、沉淀——一次踩坑、一个决策、一条规范，值得其他需求也看到时记进项目记忆。",
+          },
+          {
+            t: "h2",
+            text: "工作机制",
+          },
+          {
+            t: "ul",
+            items: [
+              "每项目一份（1:1），自由 Markdown 文本；属于项目知识库之一（chunsun knowledge index 固定展示 key=memory 的 system 条目，恒 eager）。",
+              "仅可编辑不可删除（无删除端点）。",
+              "容量上限 10k 字符，超限平台拒绝（MEMORY_TOO_LARGE）。",
+            ],
+          },
+          {
+            t: "h2",
+            text: "命令",
+          },
+          {
+            t: "code",
+            lang: "bash",
+            code: `chunsun memory get                          # 拉取 / 审计项目记忆
+chunsun memory put --snapshot '<完整 Markdown>'   # 全量覆盖写回`,
+          },
+          {
+            t: "note",
+            kind: "warn",
+            text: "put 为全量覆盖：先 get 再修改再 put，不要只追加不读旧内容。",
+          },
+          {
+            t: "h2",
+            text: "撰写规则",
+          },
+          {
+            t: "ul",
+            items: [
+              "写什么：只记跨需求复用、且代码里读不出来的——环境/部署/外部服务硬约束、决策的「为什么」、根因+解法级踩坑。",
+              "不写什么：单需求过程与总结归需求工作记忆；grep 可知的事实不记；操作流水账不记。",
+              "怎么写：一条一行，只写结论与关键依据；路径、ID、命令写全；按主题聚类，不按时间堆叠。",
+              "过时即删：配置/状态变更后旧结论直接删，只留一句极短演进记录；同主题合并，不做只追加的日志。",
+            ],
+          },
+        ],
+      },
     ],
   },
   {
@@ -812,13 +996,17 @@ export const docCategories: DocCategory[] = [
             t: "code",
             lang: "bash",
             code: `chunsun init                  # 接入：绑定仓库 + 安装 Agent 能力
+chunsun repo list|register       # 仓库绑定管理
 chunsun requirement …         # list | create | show | update
 chunsun defect …              # list | create | show | update | delete | convert-to-requirement
 chunsun run …                 # list | start | takeover | status | remind
 chunsun step add|list         # 上报 / 查看执行步骤
 chunsun scenario …            # list | upsert | status
 chunsun case …                # list | upsert | status
-chunsun context get|put       # 需求工作记忆
+chunsun requirement memory get|put <需求ID>  # 需求工作记忆（自由 Markdown，全量覆盖）
+chunsun memory get|put        # 项目级记忆（跨需求沉淀，属知识库）
+chunsun dependency …          # list | schedule | blocked | unlock
+chunsun knowledge …           # [--json] 概览 | doc | index | create | update
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付
 chunsun env list|get          # 项目环境变量（实时）
@@ -850,6 +1038,37 @@ chunsun update                # 检查并更新 CLI 到最新版本`,
               ["scenario status", "置场景状态（pending/passing/failing/blocked/waived）"],
               ["case upsert", "创建 / 更新用例"],
               ["case status", "置用例执行状态（passed/failed/blocked/skipped）"],
+            ],
+          },
+          {
+            t: "h2",
+            text: "依赖调度命令",
+          },
+          {
+            t: "table",
+            head: ["命令", "说明"],
+            rows: [
+              ["dependency list", "列出项目内全部依赖边（source blocks target）"],
+              ["dependency schedule", "全项目调度分析：拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合"],
+              ["dependency blocked <requirement|defect> <ID>", "单节点阻塞状态：是否被阻塞 + 原因（未完成前置）"],
+              ["dependency unlock <requirement|defect> <ID>", "解锁分析：模拟节点完成后下游哪些解锁、哪些仍被阻塞"],
+            ],
+          },
+          {
+            t: "h2",
+            text: "知识与记忆命令",
+          },
+          {
+            t: "table",
+            head: ["命令", "说明"],
+            rows: [
+              ["requirement memory get|put <需求ID>", "拉取 / 全量覆盖写回需求工作记忆（自由 Markdown，≤10k）"],
+              ["memory get|put", "拉取 / 写回项目级记忆（跨需求沉淀，属知识库，仅可编辑不可删除）"],
+              ["knowledge [--json]", "项目知识概览（--strategy eager|lazy 过滤）"],
+              ["knowledge index", "知识目录（元信息，不含正文）"],
+              ["knowledge doc <ID>", "单条查询知识文档正文（ID 或 constitution）"],
+              ["knowledge create --title …", "创建知识文档（不支持删除）"],
+              ["knowledge update <ID> …", "更新知识文档（不支持删除）"],
             ],
           },
           {

@@ -42,7 +42,7 @@ function goToRegister() {
   location.assign("/console/auth/register");
 }
 
-/* ── 已支持的 Agent（事实来源：packages/cli/src/ide.rs 的 IDE_TARGETS）── */
+/* ── 已支持的 Agent（事实来源：packages/cli/src/ide.rs 的 IDE_TARGETS，共 7 个）── */
 const supportedAgents = [
   { name: "Cursor", logo: "/agents/cursor.svg" },
   { name: "Trae", logo: "/agents/trae.png" },
@@ -50,8 +50,7 @@ const supportedAgents = [
   { name: "CodeBuddy", logo: "/agents/codebuddy.svg" },
   { name: "WorkBuddy", logo: "/agents/workbuddy.svg" },
   { name: "Claude Code", logo: "/agents/claude-code.svg" },
-  { name: "CodeWhale", logo: "/agents/codewhale.svg" },
-  { name: "DeepSeek Harness", logo: "/agents/deepseek-harness.svg" },
+  { name: "Agents", logo: "/agents/agents.svg" },
 ];
 
 type JourneyStep = {
