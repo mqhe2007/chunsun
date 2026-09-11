@@ -49,7 +49,6 @@ const contexts = ref<ContextItem[]>([]);
 
 const dialogOpen = ref(false);
 const formTitle = ref("");
-const formContent = ref("");
 const formLoadStrategy = ref<"eager" | "lazy">("eager");
 
 const projectId = () => (route.params as Record<string, string>).id;
@@ -97,7 +96,6 @@ async function fetchContexts() {
 
 function openCreate() {
   formTitle.value = "";
-  formContent.value = "";
   formLoadStrategy.value = "eager";
   dialogOpen.value = true;
 }
@@ -121,7 +119,7 @@ async function saveCreate() {
   try {
     const res = await api.post<{ success: boolean; data: { id: string } }>(
       `/projects/${projectId()}/knowledge/documents`,
-      { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
+      { title, content: "", loadStrategy: formLoadStrategy.value },
     );
     if (!res.data.success) throw new Error("create failed");
     dialogOpen.value = false;
@@ -258,30 +256,25 @@ onMounted(fetchContexts);
 
     <AppModal v-model="dialogOpen" title="添加文档">
       <div class="dialog-form">
+        <p class="text-sm text-base-content/60">
+          先填写标题与加载策略，创建后进入文档工作台用分屏编辑器写正文。
+        </p>
         <AppField label="标题" html-for="ctx-title">
           <input
             id="ctx-title"
             v-model="formTitle"
             type="text"
-            class="input w-full"
+            class="input input-bordered w-full"
             maxlength="200"
             placeholder="例如：编码规范、命名约定"
-          />
-        </AppField>
-        <AppField label="正文（可稍后在工作台完善）" html-for="ctx-content">
-          <textarea
-            id="ctx-content"
-            v-model="formContent"
-            rows="8"
-            class="textarea w-full mono"
-            placeholder="Markdown 正文…"
+            @keydown.enter.prevent="saveCreate"
           />
         </AppField>
         <AppField label="加载策略" html-for="ctx-strategy">
           <select
             id="ctx-strategy"
             v-model="formLoadStrategy"
-            class="select w-full"
+            class="select select-bordered w-full"
           >
             <option value="eager">启动时加载（默认，适合核心规则）</option>
             <option value="lazy">按需加载（适合参考资料、长文档）</option>
@@ -292,7 +285,7 @@ onMounted(fetchContexts);
         <button type="button" class="btn btn-ghost" @click="dialogOpen = false">取消</button>
         <button type="button" class="btn btn-primary" :disabled="saving" @click="saveCreate">
           <span v-if="saving" class="loading loading-spinner loading-sm" />
-          创建并编辑
+          创建并开始编辑
         </button>
       </template>
     </AppModal>
@@ -300,12 +293,6 @@ onMounted(fetchContexts);
 </template>
 
 <style scoped>
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
 .title-cell {
   display: inline-flex;
   align-items: center;
