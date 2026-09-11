@@ -142,7 +142,8 @@ declare module 'vue-router/auto-routes' {
       | '/projects/[id]/'
       | '/projects/[id]/defects/'
       | '/projects/[id]/dependencies'
-      | '/projects/[id]/knowledge'
+      | '/projects/[id]/knowledge/'
+      | '/projects/[id]/knowledge/docs/[docKey]'
       | '/projects/[id]/overview'
       | '/projects/[id]/requirements/'
       | '/projects/[id]/requirements/[requirementId]'
@@ -173,11 +174,18 @@ declare module 'vue-router/auto-routes' {
       { id: ParamValue<false> },
       | never
     >,
-    '/projects/[id]/knowledge': RouteRecordInfo<
-      '/projects/[id]/knowledge',
+    '/projects/[id]/knowledge/': RouteRecordInfo<
+      '/projects/[id]/knowledge/',
       '/projects/:id/knowledge',
       { id: ParamValue<true> },
       { id: ParamValue<false> },
+      | never
+    >,
+    '/projects/[id]/knowledge/docs/[docKey]': RouteRecordInfo<
+      '/projects/[id]/knowledge/docs/[docKey]',
+      '/projects/:id/knowledge/docs/:docKey',
+      { id: ParamValue<true>, docKey: ParamValue<true> },
+      { id: ParamValue<false>, docKey: ParamValue<false> },
       | never
     >,
     '/projects/[id]/overview': RouteRecordInfo<
@@ -401,7 +409,8 @@ declare module 'vue-router/auto-routes' {
         | '/projects/[id]/'
         | '/projects/[id]/defects/'
         | '/projects/[id]/dependencies'
-        | '/projects/[id]/knowledge'
+        | '/projects/[id]/knowledge/'
+        | '/projects/[id]/knowledge/docs/[docKey]'
         | '/projects/[id]/overview'
         | '/projects/[id]/requirements/'
         | '/projects/[id]/requirements/[requirementId]'
@@ -439,13 +448,21 @@ declare module 'vue-router/auto-routes' {
       pathParamNames:
         | never
     }
-    'src/pages/projects/[id]/knowledge.vue': {
+    'src/pages/projects/[id]/knowledge/index.vue': {
       routes:
-        | '/projects/[id]/knowledge'
+        | '/projects/[id]/knowledge/'
       views:
         | never
       pathParamNames:
         | never
+    }
+    'src/pages/projects/[id]/knowledge/docs/[docKey].vue': {
+      routes:
+        | '/projects/[id]/knowledge/docs/[docKey]'
+      views:
+        | never
+      pathParamNames:
+        | 'docKey'
     }
     'src/pages/projects/[id]/overview.vue': {
       routes:

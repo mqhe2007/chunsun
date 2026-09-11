@@ -14,6 +14,7 @@ pub mod notification_preference;
 pub mod project;
 pub mod project_activity;
 pub mod project_knowledge;
+pub mod project_knowledge_share;
 pub mod project_env_var;
 pub mod project_member;
 pub mod project_memory;

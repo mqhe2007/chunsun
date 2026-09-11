@@ -91,7 +91,7 @@ fn is_admin(session: &crate::auth::AuthSession) -> bool {
 }
 
 /// 项目可见性校验：成员或管理员可见（知识库 / 项目记忆等共享）。
-pub(crate) async fn visible(
+pub async fn visible(
     state: &AppState,
     session: &crate::auth::AuthSession,
     project_id: &str,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Eye } from "@lucide/vue";
+import { Eye, Pencil, Trash2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   AppColumn,
   AppField,
@@ -11,7 +11,6 @@ import {
   confirm,
   useToast,
 } from "@/ui";
-import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
 import { api } from "@/utils/api";
 
 const CONSTITUTION_KEY = "constitution";
@@ -41,6 +40,7 @@ type ContextRow = {
 };
 
 const route = useRoute();
+const router = useRouter();
 const toast = useToast();
 
 const loading = ref(false);
@@ -48,37 +48,11 @@ const saving = ref(false);
 const contexts = ref<ContextItem[]>([]);
 
 const dialogOpen = ref(false);
-const previewRow = ref<ContextRow | null>(null);
-const previewOpen = computed({
-  get: () => previewRow.value !== null,
-  set: (v: boolean) => {
-    if (!v) previewRow.value = null;
-  },
-});
-/** null = 新建自定义；constitution / id = 编辑 */
-const editingKey = ref<string | null>(null);
 const formTitle = ref("");
 const formContent = ref("");
 const formLoadStrategy = ref<"eager" | "lazy">("eager");
 
 const projectId = () => (route.params as Record<string, string>).id;
-
-const isEditingConstitution = computed(
-  () => editingKey.value === CONSTITUTION_KEY,
-);
-
-const isEditingMemory = computed(() => editingKey.value === MEMORY_KEY);
-
-const isEditingSystemItem = computed(
-  () => isEditingConstitution.value || isEditingMemory.value,
-);
-
-const dialogHeader = computed(() => {
-  if (editingKey.value === null) return "添加文档";
-  if (isEditingConstitution.value) return "编辑项目宪法";
-  if (isEditingMemory.value) return "编辑项目记忆";
-  return "编辑文档";
-});
 
 const rows = computed<ContextRow[]>(() =>
   contexts.value.map(c => ({
@@ -122,70 +96,45 @@ async function fetchContexts() {
 }
 
 function openCreate() {
-  editingKey.value = null;
   formTitle.value = "";
   formContent.value = "";
   formLoadStrategy.value = "eager";
   dialogOpen.value = true;
 }
 
-function openEdit(row: ContextRow) {
-  editingKey.value = row.key;
-  if (row.key === CONSTITUTION_KEY) {
-    formTitle.value = CONSTITUTION_TITLE;
-  } else if (row.key === MEMORY_KEY) {
-    formTitle.value = MEMORY_TITLE;
-  } else {
-    formTitle.value = row.title;
-  }
-  formContent.value = row.content;
-  formLoadStrategy.value = (row.loadStrategy as "eager" | "lazy") || "eager";
-  dialogOpen.value = true;
+function openDoc(row: ContextRow, mode?: "edit") {
+  const q = mode === "edit" ? { mode: "edit" } : {};
+  router.push({
+    path: `/projects/${projectId()}/knowledge/docs/${row.key}`,
+    query: q,
+  });
 }
 
-async function saveDoc() {
-  const title = isEditingSystemItem.value
-    ? isEditingConstitution.value
-      ? CONSTITUTION_TITLE
-      : MEMORY_TITLE
-    : formTitle.value.trim();
-
-  if (!isEditingSystemItem.value && !title) {
+async function saveCreate() {
+  const title = formTitle.value.trim();
+  if (!title) {
     toast.warn("请填写标题");
     return;
   }
 
   saving.value = true;
   try {
-    if (editingKey.value === null) {
-      const res = await api.post<{ success: boolean }>(
-        `/projects/${projectId()}/knowledge/documents`,
-        { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
-      );
-      if (!res.data.success) throw new Error("create failed");
-    } else if (isEditingConstitution.value) {
-      const res = await api.put<{ success: boolean }>(
-        `/projects/${projectId()}/knowledge/constitution`,
-        { content: formContent.value },
-      );
-      if (!res.data.success) throw new Error("constitution update failed");
-    } else if (isEditingMemory.value) {
-      const res = await api.put<{ success: boolean }>(
-        `/projects/${projectId()}/memory`,
-        { snapshot: formContent.value },
-      );
-      if (!res.data.success) throw new Error("memory update failed");
-    } else {
-      const res = await api.put<{ success: boolean }>(
-        `/projects/${projectId()}/knowledge/documents/${editingKey.value}`,
-        { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
-      );
-      if (!res.data.success) throw new Error("update failed");
-    }
-
+    const res = await api.post<{ success: boolean; data: { id: string } }>(
+      `/projects/${projectId()}/knowledge/documents`,
+      { title, content: formContent.value, loadStrategy: formLoadStrategy.value },
+    );
+    if (!res.data.success) throw new Error("create failed");
     dialogOpen.value = false;
-    toast.success("已保存");
-    await fetchContexts();
+    toast.success("已创建");
+    const id = res.data.data?.id;
+    if (id) {
+      await router.push({
+        path: `/projects/${projectId()}/knowledge/docs/${id}`,
+        query: { mode: "edit" },
+      });
+    } else {
+      await fetchContexts();
+    }
   } catch {
     toast.error("保存失败", "请稍后重试");
   } finally {
@@ -242,7 +191,13 @@ onMounted(fetchContexts);
       <AppColumn header="标题">
         <template #default="{ row }">
           <div class="title-cell">
-            <span>{{ (row as ContextRow).title }}</span>
+            <button
+              type="button"
+              class="link link-hover text-left"
+              @click="openDoc(row as ContextRow)"
+            >
+              {{ (row as ContextRow).title }}
+            </button>
             <span v-if="(row as ContextRow).system" class="badge badge-ghost">
               固定
             </span>
@@ -270,12 +225,11 @@ onMounted(fetchContexts);
         <template #default="{ row }">
           <div class="row-actions">
             <button
-              v-if="(row as ContextRow).content.trim()"
               type="button"
               class="btn btn-ghost btn-sm btn-square"
-              aria-label="查看正文"
-              title="查看渲染后的正文"
-              @click="previewRow = row as ContextRow"
+              aria-label="阅读"
+              title="阅读"
+              @click="openDoc(row as ContextRow)"
             >
               <Eye :size="16" aria-hidden="true" />
             </button>
@@ -283,9 +237,10 @@ onMounted(fetchContexts);
               type="button"
               class="btn btn-ghost btn-sm btn-square"
               aria-label="编辑"
-              @click="openEdit(row as ContextRow)"
+              title="编辑"
+              @click="openDoc(row as ContextRow, 'edit')"
             >
-              ✎
+              <Pencil :size="16" aria-hidden="true" />
             </button>
             <button
               v-if="!(row as ContextRow).system"
@@ -294,14 +249,14 @@ onMounted(fetchContexts);
               aria-label="删除"
               @click="confirmDelete(row as ContextRow)"
             >
-              ✕
+              <Trash2 :size="16" aria-hidden="true" />
             </button>
           </div>
         </template>
       </AppColumn>
     </AppTable>
 
-    <AppModal v-model="dialogOpen" :title="dialogHeader">
+    <AppModal v-model="dialogOpen" title="添加文档">
       <div class="dialog-form">
         <AppField label="标题" html-for="ctx-title">
           <input
@@ -310,38 +265,19 @@ onMounted(fetchContexts);
             type="text"
             class="input w-full"
             maxlength="200"
-            :disabled="isEditingSystemItem"
-            :placeholder="
-              isEditingSystemItem
-                ? isEditingConstitution
-                  ? CONSTITUTION_TITLE
-                  : MEMORY_TITLE
-                : '例如：编码规范、命名约定'
-            "
+            placeholder="例如：编码规范、命名约定"
           />
         </AppField>
-        <p v-if="isEditingConstitution" class="hint text-base-content/60">
-          项目宪法为系统固定项，标题不可更改、不可删除。
-        </p>
-        <p v-else-if="isEditingMemory" class="hint text-base-content/60">
-          项目记忆沉淀跨需求的填坑与经验，为系统固定项，标题不可更改、不可删除。
-        </p>
-        <AppField label="正文" html-for="ctx-content">
+        <AppField label="正文（可稍后在工作台完善）" html-for="ctx-content">
           <textarea
             id="ctx-content"
             v-model="formContent"
-            rows="14"
+            rows="8"
             class="textarea w-full mono"
-            :placeholder="
-              isEditingConstitution
-                ? '# 项目宪法\n\n## 核心原则\n- …\n\n## 技术约束\n- …'
-                : isEditingMemory
-                  ? '## 填坑记录\n- …\n\n## 经验沉淀\n- …'
-                  : 'Markdown 正文…'
-            "
+            placeholder="Markdown 正文…"
           />
         </AppField>
-        <AppField v-if="!isEditingSystemItem" label="加载策略" html-for="ctx-strategy">
+        <AppField label="加载策略" html-for="ctx-strategy">
           <select
             id="ctx-strategy"
             v-model="formLoadStrategy"
@@ -350,36 +286,20 @@ onMounted(fetchContexts);
             <option value="eager">启动时加载（默认，适合核心规则）</option>
             <option value="lazy">按需加载（适合参考资料、长文档）</option>
           </select>
-          <p class="hint text-base-content/60">
-            启动时加载：harness 启动时全量进入 prompt；按需加载：由 Agent 在需要时单条拉取，降低长上下文项目的 prompt 占用。
-          </p>
         </AppField>
       </div>
       <template #footer>
         <button type="button" class="btn btn-ghost" @click="dialogOpen = false">取消</button>
-        <button type="button" class="btn btn-primary" :disabled="saving" @click="saveDoc">
+        <button type="button" class="btn btn-primary" :disabled="saving" @click="saveCreate">
           <span v-if="saving" class="loading loading-spinner loading-sm" />
-          保存
+          创建并编辑
         </button>
       </template>
     </AppModal>
-
-    <MarkdownDrawer
-      v-model="previewOpen"
-      :title="`${previewRow?.title ?? '文档'} · 正文`"
-      :content="previewRow?.content"
-    />
   </AppPage>
 </template>
 
 <style scoped>
-
-.hint {
-  margin: 0;
-  font-size: 0.85rem;
-  line-height: 1.45;
-}
-
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.82rem;
