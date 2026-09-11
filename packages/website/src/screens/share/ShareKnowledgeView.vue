@@ -53,126 +53,149 @@ onMounted(async () => {
 
 <template>
   <div class="share-page">
-    <header class="share-header">
-      <p class="eyebrow">春笋 · 公开文档</p>
-      <template v-if="!loading && !error">
-        <h1>{{ title }}</h1>
-        <p class="meta">
-          <span v-if="projectName">{{ projectName }}</span>
-          <span v-if="updatedAt"> · 更新 {{ new Date(updatedAt).toLocaleString() }}</span>
-        </p>
-      </template>
-    </header>
+    <div class="site-rail share-rail">
+      <header class="share-header">
+        <p class="eyebrow">春笋 · 公开文档</p>
+        <template v-if="!loading && !error">
+          <h1 class="share-title">{{ title }}</h1>
+          <p class="meta">
+            <span v-if="projectName">{{ projectName }}</span>
+            <span v-if="updatedAt"> · 更新 {{ new Date(updatedAt).toLocaleString() }}</span>
+          </p>
+        </template>
+      </header>
 
-    <main class="share-main">
       <div v-if="loading" class="state">加载中…</div>
       <div v-else-if="error" class="state error">
         <h2>链接无效或已失效</h2>
         <p>请向文档所有者确认分享是否仍启用、是否过期。</p>
       </div>
-      <div v-else class="reader">
+      <div
+        v-else
+        class="reader"
+        :class="{ 'reader--no-toc': toc.length === 0 }"
+      >
+        <article class="share-article markdown-body" v-html="html" />
         <aside v-if="toc.length" class="toc">
-          <p class="toc-title">目录</p>
+          <p class="toc-title">本页目录</p>
           <button
             v-for="item in toc"
             :key="item.id"
             type="button"
             class="toc-item"
-            :style="{ paddingLeft: `${(item.level - 1) * 0.75 + 0.25}rem` }"
+            :style="{ paddingLeft: `${(item.level - 1) * 0.65 + 0.35}rem` }"
             @click="scrollTo(item.id)"
           >
             {{ item.text }}
           </button>
         </aside>
-        <article class="markdown-body" v-html="html" />
       </div>
-    </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* 宽度对齐营销/文档：site-rail → --site-rail-max 1120px（tokens.css） */
 .share-page {
   min-height: 100vh;
+  padding-top: calc(4.4rem + 2rem);
+  padding-bottom: 5rem;
   background:
-    radial-gradient(1200px 500px at 10% -10%, color-mix(in oklab, #0d6e4f 16%, transparent), transparent),
-    linear-gradient(180deg, #f7faf8 0%, #eef3f0 100%);
-  color: #1a2e24;
+    radial-gradient(1200px 480px at 85% -10%, color-mix(in srgb, var(--chunsun-tip) 9%, transparent), transparent 70%),
+    var(--chunsun-fog);
+  color: var(--chunsun-ink);
+}
+
+.share-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
 }
 
 .share-header {
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 2.5rem 1.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .eyebrow {
-  margin: 0 0 0.5rem;
+  margin: 0;
   font-size: 0.8rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: color-mix(in oklab, #0d6e4f 70%, black);
+  color: var(--chunsun-node);
 }
 
-.share-header h1 {
+.share-title {
   margin: 0;
-  font-size: clamp(1.5rem, 3vw, 2rem);
-  line-height: 1.25;
+  font-size: 1.5rem;
   font-weight: 700;
+  line-height: 1.3;
+  color: var(--chunsun-ink);
 }
 
 .meta {
-  margin: 0.55rem 0 0;
-  font-size: 0.9rem;
-  color: color-mix(in oklab, #1a2e24 55%, white);
-}
-
-.share-main {
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 0 1.5rem 3rem;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--chunsun-ink-muted);
 }
 
 .state {
   padding: 3rem 1rem;
   text-align: center;
-  color: color-mix(in oklab, #1a2e24 60%, white);
+  color: var(--chunsun-ink-muted);
 }
 
 .state.error h2 {
   margin: 0 0 0.5rem;
   font-size: 1.25rem;
+  color: var(--chunsun-ink);
 }
 
+/* 与文档页一致：正文 + 右侧 TOC；无 TOC 时正文限宽居中 */
 .reader {
   display: grid;
-  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1fr) minmax(11rem, 12rem);
+  gap: 1.75rem;
+  align-items: start;
 }
 
-@media (min-width: 900px) {
-  .reader {
-    grid-template-columns: 14rem minmax(0, 1fr);
-    align-items: start;
-    gap: 1.75rem;
-  }
+.reader--no-toc {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.reader--no-toc .share-article {
+  max-width: 52rem;
+  margin-inline: auto;
+}
+
+.share-article {
+  min-width: 0;
+  padding: 1.25rem 1.35rem;
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, white 78%, var(--chunsun-fog));
+  border: 1px solid color-mix(in srgb, var(--chunsun-rain) 20%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--chunsun-ink) 5%, transparent);
 }
 
 .toc {
   position: sticky;
-  top: 1rem;
+  top: calc(4.4rem + 1.25rem);
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.75rem;
+  gap: 0.2rem;
+  padding: 0.85rem 0.75rem;
   border-radius: 0.75rem;
-  background: color-mix(in oklab, white 80%, transparent);
-  border: 1px solid color-mix(in oklab, #1a2e24 10%, transparent);
+  background: color-mix(in srgb, white 62%, var(--chunsun-fog));
+  border: 1px solid color-mix(in srgb, var(--chunsun-rain) 16%, transparent);
 }
 
 .toc-title {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.4rem;
   font-size: 0.75rem;
-  font-weight: 600;
-  color: color-mix(in oklab, #1a2e24 50%, white);
+  font-weight: 700;
+  color: var(--chunsun-rain);
 }
 
 .toc-item {
@@ -183,21 +206,25 @@ onMounted(async () => {
   font: inherit;
   font-size: 0.82rem;
   line-height: 1.35;
-  color: inherit;
+  color: var(--chunsun-ink-muted);
   cursor: pointer;
-  padding: 0.25rem 0.2rem;
-  border-radius: 0.35rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 0.4rem;
 }
 
 .toc-item:hover {
-  background: color-mix(in oklab, #0d6e4f 10%, transparent);
+  background: color-mix(in srgb, var(--chunsun-shoot) 7%, transparent);
+  color: var(--chunsun-ink);
 }
 
-.markdown-body {
-  padding: 1.25rem 1.35rem;
-  border-radius: 0.9rem;
-  background: color-mix(in oklab, white 88%, transparent);
-  border: 1px solid color-mix(in oklab, #1a2e24 10%, transparent);
-  box-shadow: 0 10px 30px color-mix(in oklab, #1a2e24 6%, transparent);
+@media (max-width: 900px) {
+  .reader {
+    grid-template-columns: 1fr;
+  }
+
+  .toc {
+    position: static;
+    order: -1;
+  }
 }
 </style>
