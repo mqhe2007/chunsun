@@ -1,10 +1,5 @@
 import MarkdownIt from "markdown-it";
 
-/**
- * 共享 MarkdownIt 实例：项目内所有 md 文本渲染共用同一配置。
- * html=false：禁止原始 HTML，避免 XSS；linkify=true：自动识别链接。
- * 标题在 core 阶段注入稳定 id，供 TOC / 锚点跳转（parse 与 render 一致）。
- */
 export const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -46,7 +41,6 @@ export type TocItem = {
   text: string;
 };
 
-/** 从 md 提取 h1–h3 TOC（与渲染器 slug 规则一致）。 */
 export function extractToc(text: string): TocItem[] {
   if (!text || !text.trim()) return [];
   const tokens = md.parse(text, {});
@@ -65,7 +59,6 @@ export function extractToc(text: string): TocItem[] {
   return items;
 }
 
-/** 渲染 md 文本为 HTML；空文本返回空字符串。 */
 export function renderMarkdown(text: string): string {
   if (!text || !text.trim()) return "";
   return md.render(text);

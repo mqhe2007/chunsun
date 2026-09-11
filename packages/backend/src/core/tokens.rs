@@ -11,7 +11,6 @@ pub fn generate_secure_token(length: usize) -> String {
 }
 
 /// 对 token 做 sha256 哈希，用于需要防泄露的场景（如数据库泄露时无法反查原始 token）。
-#[allow(dead_code)]
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
