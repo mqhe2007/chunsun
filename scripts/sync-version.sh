@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# 以根 package.json 为唯一来源，将版本号同步到所有 Rust crate 的 Cargo.toml 与 README 版本徽章。
+# 以根 package.json 为唯一来源，将版本号同步到：
+#   - 各 Rust crate 的 Cargo.toml
+#   - 对应 Cargo.lock 中本 crate（name = "chunsun"）的 version
+#   - README 版本徽章
 # 也可先指定新版本号（会同时更新 package.json），再一键同步。
 #
 # 用法:
-#   pnpm run version:sync            # 同步当前 package.json 的版本号到各 Cargo.toml 与 README 徽章
+#   pnpm run version:sync            # 同步当前 package.json 的版本号
 #   pnpm run version:sync -- 1.0.0   # 先把版本号改为 1.0.0，再同步
+#
+# 说明：Cargo.lock 的本包 version 原先要等 cargo build 才会刷新；
+# 升版提交前必须由本脚本一并写入，避免 bump commit 漏 lock、部署后才发现脏文件。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# 需要同步版本号的 Cargo.toml 清单
-CARGO_MANIFESTS=(
-  "packages/backend/Cargo.toml"
-  "packages/cli/Cargo.toml"
+# 需要同步版本号的 Cargo 清单（toml + 同目录 lock）
+CARGO_CRATES=(
+  "packages/backend"
+  "packages/cli"
 )
 
 # 如果传了新版本号，先更新 package.json
@@ -64,16 +70,50 @@ update_cargo_version() {
   # 只有内容变化时才覆盖，避免不必要的文件改动
   if ! diff -q "$manifest" "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$manifest"
-    echo "  ✅ $manifest"
+    echo "  ✅ ${manifest}"
   else
     rm "$tmp"
     echo "  ⏭️  ${manifest}（已是 ${version}）"
   fi
 }
 
-echo "[version:sync] 同步 Cargo.toml:"
-for manifest in "${CARGO_MANIFESTS[@]}"; do
-  update_cargo_version "$manifest" "$PKG_VERSION"
+# 更新 Cargo.lock 中本 crate（name = "chunsun"）的 version 行。
+# 只改本地包条目，不动依赖图；等价于 cargo build 后 lock 里那一行的刷新。
+update_cargo_lock_version() {
+  local lock="$1"
+  local version="$2"
+
+  if [[ ! -f "$lock" ]]; then
+    echo "  ⚠️  跳过（文件不存在）: $lock"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -v ver="$version" '
+    /^\[\[package\]\]/ { in_pkg=1; is_chunsun=0; print; next }
+    /^\[\[/ { in_pkg=0; is_chunsun=0 }
+    in_pkg && /^name[[:space:]]*=[[:space:]]*"chunsun"/ { is_chunsun=1; print; next }
+    in_pkg && is_chunsun && /^version[[:space:]]*=/ {
+      print "version = \"" ver "\""
+      next
+    }
+    { print }
+  ' "$lock" > "$tmp"
+
+  if ! diff -q "$lock" "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$lock"
+    echo "  ✅ ${lock}"
+  else
+    rm "$tmp"
+    echo "  ⏭️  ${lock}（已是 ${version}）"
+  fi
+}
+
+echo "[version:sync] 同步 Cargo.toml / Cargo.lock:"
+for crate_dir in "${CARGO_CRATES[@]}"; do
+  update_cargo_version "${crate_dir}/Cargo.toml" "$PKG_VERSION"
+  update_cargo_lock_version "${crate_dir}/Cargo.lock" "$PKG_VERSION"
 done
 
 # 同步 README 版本徽章（badge 中 version-v<版本> 为唯一出现处）
@@ -92,10 +132,10 @@ update_readme_badge() {
 
   if ! diff -q "$readme" "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$readme"
-    echo "  ✅ $readme"
+    echo "  ✅ ${readme}"
   else
     rm "$tmp"
-    echo "  ⏭️  $readme（徽章已是 v${version}）"
+    echo "  ⏭️  ${readme}（徽章已是 v${version}）"
   fi
 }
 

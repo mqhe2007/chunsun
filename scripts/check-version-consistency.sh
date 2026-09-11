@@ -39,21 +39,60 @@ read_cargo_version() {
   ' "$manifest"
 }
 
+# 读取 Cargo.lock 中本 crate（name = "chunsun"）的 version
+read_cargo_lock_version() {
+  local lock="$1"
+  if [[ ! -f "$lock" ]]; then
+    echo "::error::找不到文件: $lock" >&2
+    return 1
+  fi
+  awk '
+    /^\[\[package\]\]/ { in_pkg=1; is_chunsun=0; next }
+    /^\[\[/ { in_pkg=0; is_chunsun=0 }
+    in_pkg && /^name[[:space:]]*=[[:space:]]*"chunsun"/ { is_chunsun=1; next }
+    in_pkg && is_chunsun && /^version[[:space:]]*=/ {
+      gsub(/^version[[:space:]]*=[[:space:]]*"/, "")
+      gsub(/".*/, "")
+      print
+      found=1
+      exit
+    }
+    END {
+      if (!found) {
+        print "::error::未在 Cargo.lock 找到 name=\"chunsun\" 的 version" >"/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$lock"
+}
+
 BACKEND_VERSION=$(read_cargo_version "packages/backend/Cargo.toml")
 CLI_VERSION=$(read_cargo_version "packages/cli/Cargo.toml")
+BACKEND_LOCK_VERSION=$(read_cargo_lock_version "packages/backend/Cargo.lock")
+CLI_LOCK_VERSION=$(read_cargo_lock_version "packages/cli/Cargo.lock")
 
 echo "package.json:        $PKG_VERSION"
 echo "backend Cargo.toml:  $BACKEND_VERSION"
+echo "backend Cargo.lock:  $BACKEND_LOCK_VERSION"
 echo "cli Cargo.toml:      $CLI_VERSION"
+echo "cli Cargo.lock:      $CLI_LOCK_VERSION"
 echo ""
 
 MISMATCH=0
 if [[ "$PKG_VERSION" != "$BACKEND_VERSION" ]]; then
-  echo "::error::backend 版本号不一致：期望 ${PKG_VERSION}，实际 ${BACKEND_VERSION}"
+  echo "::error::backend Cargo.toml 版本号不一致：期望 ${PKG_VERSION}，实际 ${BACKEND_VERSION}"
+  MISMATCH=1
+fi
+if [[ "$PKG_VERSION" != "$BACKEND_LOCK_VERSION" ]]; then
+  echo "::error::backend Cargo.lock 版本号不一致：期望 ${PKG_VERSION}，实际 ${BACKEND_LOCK_VERSION}"
   MISMATCH=1
 fi
 if [[ "$PKG_VERSION" != "$CLI_VERSION" ]]; then
-  echo "::error::cli 版本号不一致：期望 ${PKG_VERSION}，实际 ${CLI_VERSION}"
+  echo "::error::cli Cargo.toml 版本号不一致：期望 ${PKG_VERSION}，实际 ${CLI_VERSION}"
+  MISMATCH=1
+fi
+if [[ "$PKG_VERSION" != "$CLI_LOCK_VERSION" ]]; then
+  echo "::error::cli Cargo.lock 版本号不一致：期望 ${PKG_VERSION}，实际 ${CLI_LOCK_VERSION}"
   MISMATCH=1
 fi
 
