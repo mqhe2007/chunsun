@@ -17,6 +17,8 @@ pub struct KnowledgeShareRow {
     pub project_id: String,
     pub document_id: String,
     pub token_hash: String,
+    /// 明文 token：供项目成员再次查看链接；历史行可能为空。
+    pub token: Option<String>,
     pub enabled: bool,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_by: String,
@@ -34,7 +36,7 @@ pub struct PublicSharePayloadRow {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-const SHARE_COLS: &str = "id, project_id, document_id, token_hash, enabled, expires_at, created_by, created_at, updated_at";
+const SHARE_COLS: &str = "id, project_id, document_id, token_hash, token, enabled, expires_at, created_by, created_at, updated_at";
 
 pub async fn get_by_project_document(
     pool: &PgPool,
@@ -56,6 +58,7 @@ pub async fn upsert_share(
     pool: &PgPool,
     project_id: &str,
     document_id: &str,
+    token: &str,
     token_hash: &str,
     enabled: bool,
     expires_at: Option<DateTime<Utc>>,
@@ -64,10 +67,11 @@ pub async fn upsert_share(
     let ts = now();
     let row = sqlx::query_as::<_, KnowledgeShareRow>(&format!(
         "INSERT INTO project_knowledge_share \
-         (id, project_id, document_id, token_hash, enabled, expires_at, created_by, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) \
+         (id, project_id, document_id, token_hash, token, enabled, expires_at, created_by, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) \
          ON CONFLICT (project_id, document_id) DO UPDATE SET \
            token_hash = EXCLUDED.token_hash, \
+           token = EXCLUDED.token, \
            enabled = EXCLUDED.enabled, \
            expires_at = EXCLUDED.expires_at, \
            updated_at = EXCLUDED.updated_at \
@@ -77,6 +81,7 @@ pub async fn upsert_share(
     .bind(project_id)
     .bind(document_id)
     .bind(token_hash)
+    .bind(token)
     .bind(enabled)
     .bind(expires_at)
     .bind(created_by)

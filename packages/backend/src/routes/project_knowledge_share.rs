@@ -77,6 +77,25 @@ struct PatchShareBody {
     expires_at: Option<Option<String>>,
 }
 
+fn share_status_json(
+    public_origin: &str,
+    s: &share_repo::KnowledgeShareRow,
+) -> Value {
+    let url = s
+        .token
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .map(|t| share_url(public_origin, t));
+    json!({
+        "hasToken": true,
+        "enabled": s.enabled,
+        "expiresAt": s.expires_at.as_ref().map(dt_value),
+        "urlPath": "/share/k/{token}",
+        "url": url,
+        "active": is_share_active(s.enabled, s.expires_at),
+    })
+}
+
 async fn get_share(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
@@ -95,14 +114,9 @@ async fn get_share(
             "enabled": false,
             "expiresAt": Value::Null,
             "urlPath": "/share/k/{token}",
+            "url": Value::Null,
         }))),
-        Some(s) => Ok(ok(json!({
-            "hasToken": true,
-            "enabled": s.enabled,
-            "expiresAt": s.expires_at.as_ref().map(dt_value),
-            "urlPath": "/share/k/{token}",
-            "active": is_share_active(s.enabled, s.expires_at),
-        }))),
+        Some(s) => Ok(ok(share_status_json(&state.config().public_origin, &s))),
     }
 }
 
@@ -125,6 +139,7 @@ async fn create_or_rotate_share(
         &state.pool(),
         &pid,
         &doc_id,
+        &token,
         &token_hash,
         true,
         expires_at,
@@ -172,13 +187,10 @@ async fn patch_share(
     .await?
     .ok_or_else(|| AppError::not_found("SHARE_NOT_FOUND"))?;
 
-    Ok(ok(json!({
-        "hasToken": true,
-        "enabled": updated.enabled,
-        "expiresAt": updated.expires_at.as_ref().map(dt_value),
-        "urlPath": "/share/k/{token}",
-        "active": is_share_active(updated.enabled, updated.expires_at),
-    })))
+    Ok(ok(share_status_json(
+        &state.config().public_origin,
+        &updated,
+    )))
 }
 
 async fn delete_share(
@@ -196,13 +208,10 @@ async fn delete_share(
         .await?
         .ok_or_else(|| AppError::not_found("SHARE_NOT_FOUND"))?;
 
-    Ok(ok(json!({
-        "hasToken": true,
-        "enabled": updated.enabled,
-        "expiresAt": updated.expires_at.as_ref().map(dt_value),
-        "urlPath": "/share/k/{token}",
-        "active": false,
-    })))
+    Ok(ok(share_status_json(
+        &state.config().public_origin,
+        &updated,
+    )))
 }
 
 async fn get_public_share(

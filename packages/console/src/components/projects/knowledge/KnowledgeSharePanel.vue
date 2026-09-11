@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { api } from "@/utils/api";
-import { useToast } from "@/ui";
+import { AppField, useToast } from "@/ui";
 
 const props = defineProps<{
   projectId: string;
@@ -19,13 +19,15 @@ const hasToken = ref(false);
 const enabled = ref(false);
 const active = ref(false);
 const expiresAt = ref<string | null>(null);
-const plaintextUrl = ref("");
+const shareUrl = ref("");
 const expirePreset = ref<"none" | "7d" | "30d" | "custom">("none");
 const customExpires = ref("");
 
 const shareApi = computed(
   () => `/projects/${props.projectId}/knowledge/documents/${props.docId}/share`,
 );
+
+const needsRotateForUrl = computed(() => hasToken.value && !shareUrl.value);
 
 function expiresIsoFromPreset(): string | null {
   if (expirePreset.value === "none") return null;
@@ -35,6 +37,20 @@ function expiresIsoFromPreset(): string | null {
   }
   const days = expirePreset.value === "7d" ? 7 : 30;
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function applyStatus(data: {
+  hasToken: boolean;
+  enabled: boolean;
+  active?: boolean;
+  expiresAt: string | null;
+  url?: string | null;
+}) {
+  hasToken.value = data.hasToken;
+  enabled.value = data.enabled;
+  active.value = Boolean(data.active);
+  expiresAt.value = data.expiresAt;
+  shareUrl.value = data.url?.trim() || "";
 }
 
 async function loadStatus() {
@@ -48,13 +64,11 @@ async function loadStatus() {
         enabled: boolean;
         active?: boolean;
         expiresAt: string | null;
+        url?: string | null;
       };
     }>(shareApi.value);
     if (!data.success) throw new Error("load failed");
-    hasToken.value = data.data.hasToken;
-    enabled.value = data.data.enabled;
-    active.value = Boolean(data.data.active);
-    expiresAt.value = data.data.expiresAt;
+    applyStatus(data.data);
   } catch {
     toast.error("加载分享状态失败");
   } finally {
@@ -68,14 +82,22 @@ async function enableOrRotate() {
     const expires = expiresIsoFromPreset();
     const { data } = await api.post<{
       success: boolean;
-      data: { token: string; url: string; enabled: boolean; expiresAt: string | null; active: boolean };
+      data: {
+        token: string;
+        url: string;
+        enabled: boolean;
+        expiresAt: string | null;
+        active: boolean;
+      };
     }>(shareApi.value, { expiresAt: expires });
     if (!data.success) throw new Error("create failed");
-    plaintextUrl.value = data.data.url;
-    hasToken.value = true;
-    enabled.value = data.data.enabled;
-    active.value = data.data.active;
-    expiresAt.value = data.data.expiresAt;
+    applyStatus({
+      hasToken: true,
+      enabled: data.data.enabled,
+      active: data.data.active,
+      expiresAt: data.data.expiresAt,
+      url: data.data.url,
+    });
     toast.success("已生成分享链接");
   } catch {
     toast.error("生成失败");
@@ -92,21 +114,32 @@ async function setEnabled(next: boolean) {
   saving.value = true;
   try {
     if (!next) {
-      const { data } = await api.delete<{ success: boolean }>(shareApi.value);
+      const { data } = await api.delete<{
+        success: boolean;
+        data: {
+          hasToken: boolean;
+          enabled: boolean;
+          active?: boolean;
+          expiresAt: string | null;
+          url?: string | null;
+        };
+      }>(shareApi.value);
       if (!data.success) throw new Error("disable failed");
-      enabled.value = false;
-      active.value = false;
-      plaintextUrl.value = "";
+      applyStatus(data.data);
       toast.success("已停用分享");
     } else {
       const { data } = await api.patch<{
         success: boolean;
-        data: { enabled: boolean; active: boolean; expiresAt: string | null };
+        data: {
+          hasToken: boolean;
+          enabled: boolean;
+          active?: boolean;
+          expiresAt: string | null;
+          url?: string | null;
+        };
       }>(shareApi.value, { enabled: true });
       if (!data.success) throw new Error("enable failed");
-      enabled.value = data.data.enabled;
-      active.value = data.data.active;
-      expiresAt.value = data.data.expiresAt;
+      applyStatus(data.data);
       toast.success("已重新启用");
     }
   } catch {
@@ -121,19 +154,22 @@ async function onToggleChange(ev: Event) {
   const next = input.checked;
   const prev = !next;
   await setEnabled(next);
-  // 请求未成功时恢复开关（enabled 仍为 prev）
   if (enabled.value !== next) {
     input.checked = prev;
   }
 }
 
 async function copyUrl() {
-  if (!plaintextUrl.value) {
-    toast.warn("请先生成或重新生成链接（明文链接仅在生成时展示）");
+  if (!shareUrl.value) {
+    toast.warn(
+      needsRotateForUrl.value
+        ? "旧链接无法恢复，请重新生成一次"
+        : "请先生成分享链接",
+    );
     return;
   }
   try {
-    await navigator.clipboard.writeText(plaintextUrl.value);
+    await navigator.clipboard.writeText(shareUrl.value);
     toast.success("已复制");
   } catch {
     toast.error("复制失败");
@@ -141,10 +177,7 @@ async function copyUrl() {
 }
 
 watch(open, v => {
-  if (v) {
-    plaintextUrl.value = "";
-    void loadStatus();
-  }
+  if (v) void loadStatus();
 });
 
 onMounted(() => {
@@ -166,7 +199,7 @@ onMounted(() => {
         <div v-if="loading" class="mt-4 flex justify-center py-6">
           <span class="loading loading-spinner" />
         </div>
-        <div v-else class="mt-4 flex flex-col gap-3">
+        <div v-else class="mt-4 flex flex-col gap-4">
           <div class="flex items-center justify-between gap-3">
             <span class="text-sm">启用分享</span>
             <input
@@ -181,31 +214,66 @@ onMounted(() => {
             状态：{{ active ? "有效" : "已停用或已过期" }}
             <template v-if="expiresAt"> · 过期 {{ new Date(expiresAt).toLocaleString() }}</template>
           </p>
-          <label class="form-control w-full">
-            <span class="label-text text-sm">过期（生成/轮换时生效）</span>
-            <select v-model="expirePreset" class="select select-bordered w-full">
+
+          <AppField
+            v-if="shareUrl"
+            label="当前链接"
+            hint="项目成员可随时查看与复制；对外仍为只读访问。"
+          >
+            <div class="flex gap-2">
+              <input
+                type="text"
+                class="input input-bordered w-full font-mono text-xs"
+                :value="shareUrl"
+                readonly
+              />
+              <button type="button" class="btn btn-ghost shrink-0" @click="copyUrl">
+                复制
+              </button>
+            </div>
+          </AppField>
+          <p
+            v-else-if="needsRotateForUrl"
+            class="rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+          >
+            此分享生成于升级前，链接无法回显。请点「重新生成链接」一次即可恢复查看。
+          </p>
+
+          <AppField label="过期（生成/轮换时生效）" html-for="share-expire">
+            <select
+              id="share-expire"
+              v-model="expirePreset"
+              class="select select-bordered w-full"
+            >
               <option value="none">永不过期</option>
               <option value="7d">7 天</option>
               <option value="30d">30 天</option>
               <option value="custom">自定义</option>
             </select>
-          </label>
-          <input
+          </AppField>
+          <AppField
             v-if="expirePreset === 'custom'"
-            v-model="customExpires"
-            type="datetime-local"
-            class="input input-bordered w-full"
-          />
-          <div v-if="plaintextUrl" class="rounded-box bg-base-200 p-3">
-            <p class="mb-1 text-xs text-base-content/50">链接（仅此时可见，请立即复制）</p>
-            <code class="block break-all text-xs">{{ plaintextUrl }}</code>
-          </div>
+            label="自定义过期时间"
+            html-for="share-expire-custom"
+          >
+            <input
+              id="share-expire-custom"
+              v-model="customExpires"
+              type="datetime-local"
+              class="input input-bordered w-full"
+            />
+          </AppField>
         </div>
       </template>
       <div class="modal-action flex-wrap">
         <button type="button" class="btn btn-ghost" @click="open = false">关闭</button>
         <template v-if="shareable">
-          <button type="button" class="btn btn-ghost" :disabled="!plaintextUrl" @click="copyUrl">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            :disabled="!shareUrl"
+            @click="copyUrl"
+          >
             复制链接
           </button>
           <button

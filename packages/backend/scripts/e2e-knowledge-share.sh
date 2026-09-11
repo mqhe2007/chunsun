@@ -71,6 +71,13 @@ check "返回 token" '"token":' "$SHARE"
 check "返回 url" '"url":' "$SHARE"
 STOKEN=$(echo "$SHARE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
 
+echo "== 2b. GET 可回显当前链接 =="
+STATUS=$(get "/projects/$PID/knowledge/documents/$DOC_ID/share")
+check "状态查询成功" '"success":true' "$STATUS"
+check "状态含 url" '"url":' "$STATUS"
+STATUS_TOKEN=$(echo "$STATUS" | python3 -c 'import sys,json,re;u=json.load(sys.stdin)["data"]["url"];print(u.rsplit("/",1)[-1])')
+check "状态 url 与生成一致" "$STOKEN" "$STATUS_TOKEN"
+
 echo "== 3. 公开读取 =="
 PUB=$(curl -s "$BASE/public/knowledge/shares/$STOKEN")
 check "公开可读" '"success":true' "$PUB"
