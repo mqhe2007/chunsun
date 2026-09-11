@@ -1,6 +1,6 @@
 [package]
 name = "chunsun"
-version = "0.9.9"
+version = "0.9.10"
 edition = "2021"
 description = "春笋 CLI"
 publish = false
