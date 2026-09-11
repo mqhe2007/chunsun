@@ -85,6 +85,10 @@ async function enableOrRotate() {
 }
 
 async function setEnabled(next: boolean) {
+  if (next && !hasToken.value) {
+    await enableOrRotate();
+    return;
+  }
   saving.value = true;
   try {
     if (!next) {
@@ -106,9 +110,20 @@ async function setEnabled(next: boolean) {
       toast.success("已重新启用");
     }
   } catch {
-    toast.error("更新失败", "若尚未生成链接请先生成");
+    toast.error("更新失败");
   } finally {
     saving.value = false;
+  }
+}
+
+async function onToggleChange(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const next = input.checked;
+  const prev = !next;
+  await setEnabled(next);
+  // 请求未成功时恢复开关（enabled 仍为 prev）
+  if (enabled.value !== next) {
+    input.checked = prev;
   }
 }
 
@@ -146,7 +161,7 @@ onMounted(() => {
       </p>
       <template v-else>
         <p class="mt-2 text-sm text-base-content/60">
-          生成只读公开链接。链接含随机 token，可随时停用或轮换；停用后旧链接立即失效。
+          打开「启用分享」即生成只读公开链接；可随时停用或重新生成（旧链接立即失效）。
         </p>
         <div v-if="loading" class="mt-4 flex justify-center py-6">
           <span class="loading loading-spinner" />
@@ -158,8 +173,8 @@ onMounted(() => {
               type="checkbox"
               class="toggle"
               :checked="enabled"
-              :disabled="saving || (!hasToken && !enabled)"
-              @change="setEnabled(($event.target as HTMLInputElement).checked)"
+              :disabled="saving"
+              @change="onToggleChange"
             />
           </div>
           <p v-if="hasToken" class="text-xs text-base-content/50">
