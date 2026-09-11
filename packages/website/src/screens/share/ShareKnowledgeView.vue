@@ -17,6 +17,15 @@ const updatedAt = ref<string | null>(null);
 const html = computed(() => renderMarkdown(content.value));
 const toc = computed(() => extractToc(content.value));
 
+const updatedLabel = computed(() => {
+  if (!updatedAt.value) return "";
+  try {
+    return new Date(updatedAt.value).toLocaleString();
+  } catch {
+    return "";
+  }
+});
+
 function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -52,23 +61,28 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="share-page">
+  <div class="site-theme share-page">
     <div class="site-rail share-rail">
-      <header class="share-header">
-        <p class="eyebrow">春笋 · 公开文档</p>
-        <template v-if="!loading && !error">
-          <h1 class="share-title">{{ title }}</h1>
-          <p class="meta">
-            <span v-if="projectName">{{ projectName }}</span>
-            <span v-if="updatedAt"> · 更新 {{ new Date(updatedAt).toLocaleString() }}</span>
-          </p>
-        </template>
+      <!-- 独立临时页：无站点导航；轻量出处 + 文档主标题 + 元信息分层 -->
+      <header v-if="!loading && !error" class="doc-masthead">
+        <h1 class="doc-title">{{ title }}</h1>
+        <dl class="doc-meta">
+          <div v-if="projectName" class="meta-item">
+            <dt>来自项目</dt>
+            <dd>{{ projectName }}</dd>
+          </div>
+          <div v-if="updatedLabel" class="meta-item">
+            <dt>最近更新</dt>
+            <dd>{{ updatedLabel }}</dd>
+          </div>
+        </dl>
       </header>
 
       <div v-if="loading" class="state">加载中…</div>
       <div v-else-if="error" class="state error">
-        <h2>链接无效或已失效</h2>
-        <p>请向文档所有者确认分享是否仍启用、是否过期。</p>
+        <p class="error-kicker">分享链接</p>
+        <h1 class="error-title">无法打开此文档</h1>
+        <p class="error-lead">链接可能已停用、过期或无效。请向文档所有者确认后重试。</p>
       </div>
       <div
         v-else
@@ -90,18 +104,23 @@ onMounted(async () => {
           </button>
         </aside>
       </div>
+
+      <footer class="share-foot">
+        <span>春笋</span>
+        <span class="foot-sep" aria-hidden="true">·</span>
+        <span>公开只读副本，内容以项目内最新版为准</span>
+      </footer>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 宽度对齐营销/文档：site-rail → --site-rail-max 1120px（tokens.css） */
+/* 宽度仍用站点 site-rail（1120px）；无站点头，偏临时页 */
 .share-page {
   min-height: 100vh;
-  padding-top: calc(4.4rem + 2rem);
-  padding-bottom: 5rem;
+  padding-block: 2.5rem 3.5rem;
   background:
-    radial-gradient(1200px 480px at 85% -10%, color-mix(in srgb, var(--chunsun-tip) 9%, transparent), transparent 70%),
+    radial-gradient(900px 420px at 12% -8%, color-mix(in srgb, var(--chunsun-tip) 10%, transparent), transparent 65%),
     var(--chunsun-fog);
   color: var(--chunsun-ink);
 }
@@ -112,48 +131,93 @@ onMounted(async () => {
   gap: 1.75rem;
 }
 
-.share-header {
+.doc-masthead {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.55rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--chunsun-rain) 18%, transparent);
 }
 
-.eyebrow {
+.doc-title {
   margin: 0;
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--chunsun-node);
-}
-
-.share-title {
-  margin: 0;
-  font-size: 1.5rem;
+  font-size: clamp(1.65rem, 2.4vw, 2.05rem);
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
   color: var(--chunsun-ink);
 }
 
-.meta {
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.15rem;
   margin: 0;
-  font-size: 0.875rem;
-  line-height: 1.4;
+}
+
+.meta-item {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.meta-item dt {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--chunsun-rain);
+}
+
+.meta-item dd {
+  margin: 0;
+  font-size: 0.8rem;
   color: var(--chunsun-ink-muted);
 }
 
+.meta-item + .meta-item {
+  position: relative;
+}
+
+.meta-item + .meta-item::before {
+  content: "·";
+  position: absolute;
+  left: -0.7rem;
+  color: var(--chunsun-rain);
+  opacity: 0.7;
+}
+
 .state {
-  padding: 3rem 1rem;
+  padding: 3.5rem 1rem;
   text-align: center;
   color: var(--chunsun-ink-muted);
 }
 
-.state.error h2 {
+.error-kicker {
   margin: 0 0 0.5rem;
-  font-size: 1.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--chunsun-rain);
+}
+
+.error-title {
+  margin: 0 0 0.55rem;
+  font-size: 1.45rem;
   color: var(--chunsun-ink);
 }
 
-/* 与文档页一致：正文 + 右侧 TOC；无 TOC 时正文限宽居中 */
+.error-lead {
+  margin: 0 auto;
+  max-width: 28rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 .reader {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(11rem, 12rem);
@@ -172,7 +236,7 @@ onMounted(async () => {
 
 .share-article {
   min-width: 0;
-  padding: 1.25rem 1.35rem;
+  padding: 1.35rem 1.45rem;
   border-radius: 0.9rem;
   background: color-mix(in srgb, white 78%, var(--chunsun-fog));
   border: 1px solid color-mix(in srgb, var(--chunsun-rain) 20%, transparent);
@@ -181,7 +245,7 @@ onMounted(async () => {
 
 .toc {
   position: sticky;
-  top: calc(4.4rem + 1.25rem);
+  top: 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -215,6 +279,19 @@ onMounted(async () => {
 .toc-item:hover {
   background: color-mix(in srgb, var(--chunsun-shoot) 7%, transparent);
   color: var(--chunsun-ink);
+}
+
+.share-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--chunsun-rain);
+}
+
+.foot-sep {
+  opacity: 0.7;
 }
 
 @media (max-width: 900px) {
