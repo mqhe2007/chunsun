@@ -9,7 +9,7 @@
             @click="closeDrawer"
           >
             <Folder class="h-4 w-4" aria-hidden="true" />
-            项目管理
+            项目
           </RouterLink>
         </li>
         <li>

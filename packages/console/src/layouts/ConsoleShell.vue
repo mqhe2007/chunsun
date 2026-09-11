@@ -31,7 +31,7 @@
         <RouterLink
           to="/projects"
           class="flex h-14 shrink-0 items-center gap-2 px-4 text-base-content"
-          aria-label="回到项目管理"
+          aria-label="回到项目"
           @click="closeDrawer"
         >
           <BrandMark :size="24" />

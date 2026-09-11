@@ -7,6 +7,9 @@ import { api } from "@/utils/api";
 import { useAuthStore } from "@/stores/auth";
 import ProjectFormModal from "@/components/ProjectFormModal.vue";
 import type { Project } from "@/types/project";
+import { partitionProjectsByOwnership } from "./projectListPartition";
+
+type ProjectTab = "mine" | "participating";
 
 const router = useRouter();
 const toast = useToast();
@@ -15,14 +18,32 @@ const currentUserId = authStore.userId;
 
 const loading = ref(false);
 const projects = ref<Project[]>([]);
-const total = ref(0);
+const activeTab = ref<ProjectTab>("mine");
 const page = ref(1);
 const pageSize = ref(20);
 
 const modalOpen = ref(false);
 
+const partitioned = computed(() =>
+  partitionProjectsByOwnership(projects.value, currentUserId),
+);
+const mineProjects = computed(() => partitioned.value.mine);
+const participatingProjects = computed(() => partitioned.value.participating);
+const tabProjects = computed(() =>
+  activeTab.value === "mine" ? mineProjects.value : participatingProjects.value,
+);
+const total = computed(() => tabProjects.value.length);
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 const showPaginator = computed(() => total.value > pageSize.value);
+const pagedProjects = computed(() => {
+  const start = (page.value - 1) * pageSize.value;
+  return tabProjects.value.slice(start, start + pageSize.value);
+});
+const emptyCopy = computed(() =>
+  activeTab.value === "mine"
+    ? { title: "暂无项目", action: true as const }
+    : { title: "暂无参与的项目", action: false as const },
+);
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("zh-CN");
@@ -31,22 +52,32 @@ function formatDate(value: string) {
 async function fetchProjects() {
   loading.value = true;
   try {
-    const { data } = await api.get<{
-      success: boolean;
-      data: Project[];
-      meta: { total: number; page: number; pageSize: number; totalPages: number };
-    }>("/projects", {
-      params: {
-        page: page.value,
-        pageSize: pageSize.value,
-      },
-    });
-    if (data.success) {
-      projects.value = data.data;
-      total.value = data.meta.total;
-    } else {
-      toast.error("获取失败", "获取项目列表失败");
-    }
+    const collected: Project[] = [];
+    let currentPage = 1;
+    let totalPagesFromApi = 1;
+    const fetchPageSize = 100;
+
+    do {
+      const { data } = await api.get<{
+        success: boolean;
+        data: Project[];
+        meta: { total: number; page: number; pageSize: number; totalPages: number };
+      }>("/projects", {
+        params: {
+          page: currentPage,
+          pageSize: fetchPageSize,
+        },
+      });
+      if (!data.success) {
+        toast.error("获取失败", "获取项目列表失败");
+        return;
+      }
+      collected.push(...data.data);
+      totalPagesFromApi = Math.max(1, data.meta.totalPages);
+      currentPage += 1;
+    } while (currentPage <= totalPagesFromApi);
+
+    projects.value = collected;
   } catch {
     toast.error("获取失败", "获取项目列表失败");
   } finally {
@@ -60,6 +91,8 @@ function openCreateModal() {
 
 function handleModalSuccess(project: Project) {
   projects.value.unshift(project);
+  activeTab.value = "mine";
+  page.value = 1;
 }
 
 function enterProject(project: Project) {
@@ -81,7 +114,19 @@ function goNext() {
   page.value = Math.min(totalPages.value, page.value + 1);
 }
 
-watch([page, pageSize], fetchProjects);
+function setTab(tab: ProjectTab) {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  page.value = 1;
+}
+
+watch(pageSize, () => {
+  page.value = 1;
+});
+
+watch(totalPages, (pages) => {
+  if (page.value > pages) page.value = pages;
+});
 
 onMounted(async () => {
   await fetchProjects();
@@ -89,25 +134,57 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppPage title="项目管理">
+  <AppPage title="项目">
     <template #actions>
       <button type="button" class="btn btn-primary" @click="openCreateModal">新建项目</button>
     </template>
+
+    <div role="tablist" class="tabs tabs-border project-tabs">
+      <button
+        type="button"
+        role="tab"
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'mine' }"
+        :aria-selected="activeTab === 'mine'"
+        @click="setTab('mine')"
+      >
+        我的项目
+        <span class="badge badge-ghost badge-sm">{{ mineProjects.length }}</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'participating' }"
+        :aria-selected="activeTab === 'participating'"
+        @click="setTab('participating')"
+      >
+        参与的项目
+        <span class="badge badge-ghost badge-sm">{{ participatingProjects.length }}</span>
+      </button>
+    </div>
 
     <div v-if="loading" class="empty-state">
       <span class="loading loading-spinner loading-lg text-primary" />
       <p class="text-base-content/60">加载中...</p>
     </div>
 
-    <div v-else-if="projects.length === 0" class="empty-state">
+    <div v-else-if="pagedProjects.length === 0" class="empty-state">
       <Folder class="empty-icon text-primary" :size="40" aria-hidden="true" />
-      <p class="text-base-content/60">暂无项目</p>
-      <button type="button" class="btn btn-primary" @click="openCreateModal">创建第一个项目</button>
+      <p class="text-base-content/60">{{ emptyCopy.title }}</p>
+      <button
+        v-if="emptyCopy.action"
+        type="button"
+        class="btn btn-primary"
+        @click="openCreateModal"
+      >
+        创建第一个项目
+      </button>
     </div>
 
     <div v-else class="card-grid">
       <article
-        v-for="project in projects"
+        v-for="project in pagedProjects"
         :key="project.id"
         class="card bg-base-100 project-card"
         role="button"
@@ -125,12 +202,6 @@ onMounted(async () => {
               <div class="project-title-row">
                 <span class="project-name">{{ project.name }}</span>
               </div>
-              <span
-                v-if="project.userId !== currentUserId"
-                class="badge badge-neutral project-shared"
-              >
-                共享
-              </span>
             </div>
           </div>
 
@@ -185,6 +256,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.project-tabs {
+  width: fit-content;
+  max-width: 100%;
+}
 
 .empty-state {
   display: flex;
@@ -261,10 +336,6 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.project-shared {
-  align-self: flex-start;
 }
 
 .project-desc {

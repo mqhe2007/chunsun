@@ -2,7 +2,7 @@
 import ProjectListView from "@/screens/projects/ProjectListView.vue";
 
 definePage({
-  meta: { title: "项目管理" },
+  meta: { title: "项目" },
 });
 </script>
 
