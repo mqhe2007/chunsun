@@ -45,6 +45,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/share/k/[token]': RouteRecordInfo<
+      '/share/k/[token]',
+      '/share/k/:token',
+      { token: ParamValue<true> },
+      { token: ParamValue<false> },
+      | never
+    >,
   }
 
   /**
@@ -73,6 +80,14 @@ declare module 'vue-router/auto-routes' {
         | never
       pathParamNames:
         | never
+    }
+    'src/pages/share/k/[token].vue': {
+      routes:
+        | '/share/k/[token]'
+      views:
+        | never
+      pathParamNames:
+        | 'token'
     }
   }
 
