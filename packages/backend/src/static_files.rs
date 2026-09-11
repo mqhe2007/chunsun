@@ -74,7 +74,12 @@ fn serve_cli(req: &Request, relative: &str) -> Response {
     if relative == ".keep" {
         return (StatusCode::NOT_FOUND, "Not Found\n").into_response();
     }
-    let Some(file) = CliDist::get(relative) else {
+    // 精确命中 → 直接返回；未命中时若是带版本号的 CLI 二进制文件名，
+    // 回退到当前实例版本（兼容旧 CLI 用本机 version 拼下载 URL 的 bug）。
+    let file = CliDist::get(relative).or_else(|| {
+        rewrite_cli_dist_to_current_version(relative).and_then(|alt| CliDist::get(&alt))
+    });
+    let Some(file) = file else {
         return (
             StatusCode::NOT_FOUND,
             format!(
@@ -92,6 +97,30 @@ fn serve_cli(req: &Request, relative: &str) -> Response {
         res.body(Body::from(file.data.into_owned()))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
     }
+}
+
+/// `chunsun-cli-{os}-{arch}-v{任意版本}[.exe]` → 同平台架构但版本换为当前实例版本。
+/// 非该形态或版本已是当前版本时返回 None。
+fn rewrite_cli_dist_to_current_version(relative: &str) -> Option<String> {
+    const PREFIX: &str = "chunsun-cli-";
+    let rest = relative.strip_prefix(PREFIX)?;
+    let (stem, exe) = match rest.strip_suffix(".exe") {
+        Some(s) => (s, true),
+        None => (rest, false),
+    };
+    let (platform_arch, ver) = stem.rsplit_once("-v")?;
+    if ver.is_empty() || !ver.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    let current = env!("CHUNSUN_VERSION");
+    if ver == current {
+        return None;
+    }
+    let mut out = format!("{PREFIX}{platform_arch}-v{current}");
+    if exe {
+        out.push_str(".exe");
+    }
+    Some(out)
 }
 
 fn is_console_path(path: &str) -> bool {
@@ -180,6 +209,29 @@ mod tests {
         assert_eq!(strip_cli_prefix("/cli/install.sh"), Some("install.sh"));
         assert_eq!(strip_cli_prefix("/cli"), Some(""));
         assert_eq!(strip_cli_prefix("/docs"), None);
+    }
+
+    #[test]
+    fn rewrite_cli_dist_maps_old_version_to_current() {
+        let current = env!("CHUNSUN_VERSION");
+        let input = "chunsun-cli-darwin-arm64-v0.0.1";
+        let out = rewrite_cli_dist_to_current_version(input).expect("should rewrite");
+        assert_eq!(out, format!("chunsun-cli-darwin-arm64-v{current}"));
+        assert_eq!(
+            rewrite_cli_dist_to_current_version(&format!(
+                "chunsun-cli-windows-x64-v0.0.1.exe"
+            )),
+            Some(format!("chunsun-cli-windows-x64-v{current}.exe"))
+        );
+        // 已是当前版本 → 不再改写
+        assert_eq!(
+            rewrite_cli_dist_to_current_version(&format!(
+                "chunsun-cli-linux-x64-v{current}"
+            )),
+            None
+        );
+        assert_eq!(rewrite_cli_dist_to_current_version("install.sh"), None);
+        assert_eq!(rewrite_cli_dist_to_current_version("not-a-cli"), None);
     }
 
     #[test]

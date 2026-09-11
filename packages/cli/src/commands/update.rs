@@ -162,9 +162,11 @@ fn arch_name() -> &'static str {
 
 /// 下载文件名带版本号（如 chunsun-cli-darwin-arm64-v0.9.3）：
 /// 每次发版 URL 唯一，CDN 缓存策略无论怎么设都会回源拉取最新产物（cache-busting）。
-fn get_binary_name() -> String {
+/// `target_version` 必须是**要下载的目标版本**（通常为实例 health 返回的 latest），
+/// 不能用当前 CLI 的 `version()`——否则旧客户端会去拉已不存在的旧文件名导致 404。
+fn get_binary_name(target_version: &str) -> String {
     let arch = arch_name();
-    let ver = version();
+    let ver = target_version.trim().trim_start_matches('v');
     if cfg!(windows) {
         format!("chunsun-cli-windows-{arch}-v{ver}.exe")
     } else {
@@ -338,7 +340,7 @@ pub fn run(args: UpdateArgs) -> CmdResult {
 
     println!("[chunsun] 发现新版本 v{}", latest.version);
 
-    let binary_name = get_binary_name();
+    let binary_name = get_binary_name(&latest.version);
     let download_url = format!("{base_url}/{binary_name}");
     let exec_path = std::env::current_exe().map_err(|e| CmdError::new(e.to_string()))?;
     let tmp_path = PathBuf::from(format!("{}.new", exec_path.display()));
@@ -445,6 +447,22 @@ mod tests {
         assert_eq!(parse_semver("0.4.8.1"), None);
         assert_eq!(parse_semver("abc"), None);
         assert_eq!(parse_semver("v0.4.x"), None);
+    }
+
+    #[test]
+    fn get_binary_name_uses_target_version_not_local() {
+        let name = get_binary_name("9.9.9");
+        assert!(
+            name.contains("-v9.9.9"),
+            "expected target version in filename, got {name}"
+        );
+        assert!(
+            !name.contains(&format!("-v{}", version())),
+            "must use target version, not local CLI version {}; got {name}",
+            version()
+        );
+        // 兼容 health 偶发带前导 v
+        assert_eq!(get_binary_name("v1.2.3"), get_binary_name("1.2.3"));
     }
 
     #[test]
