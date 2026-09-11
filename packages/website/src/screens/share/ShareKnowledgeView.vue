@@ -100,9 +100,9 @@ onMounted(async () => {
 }
 
 .share-header {
-  max-width: 56rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 2.5rem 1.25rem 1rem;
+  padding: 2.5rem 1.5rem 1rem;
 }
 
 .eyebrow {
@@ -127,9 +127,9 @@ onMounted(async () => {
 }
 
 .share-main {
-  max-width: 56rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 0 1.25rem 3rem;
+  padding: 0 1.5rem 3rem;
 }
 
 .state {
@@ -150,8 +150,9 @@ onMounted(async () => {
 
 @media (min-width: 900px) {
   .reader {
-    grid-template-columns: 12rem minmax(0, 1fr);
+    grid-template-columns: 14rem minmax(0, 1fr);
     align-items: start;
+    gap: 1.75rem;
   }
 }
 
