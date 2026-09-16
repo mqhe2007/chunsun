@@ -219,14 +219,44 @@ fn skip_bracket_link(chars: &[char], start: usize) -> Option<usize> {
 
 /// 批注锚点能否在当前正文里定位到。
 ///
-/// 判定与前端一致：规范化后做子串查找；**找不到才算漂移**。
+/// 判定漂移：保守地做规范化子串查找，**只有两种形态都找不到才算漂移**。
 /// 锚点为空（整篇批注）恒视为可定位——它本来就不依赖正文。
+///
+/// 关键：anchor_text 是浏览器 DOM selection.toString() 的已渲染可见文本，
+/// 不是 Markdown 源码，所以只做空白折叠，不再剥除 markdown 标记字符。
+/// 正文侧先尝试轻量“可见文本”，再用折叠后的源码兜底，以免把 `foo_bar`、
+/// 字面量 `*` 等可见字符误当成 Markdown 语法而错误置 stale。
 pub fn anchor_resolvable(content: &str, anchor_text: &str) -> bool {
-    let anchor = markdown_visible_text(anchor_text);
+    let anchor = fold_whitespace(anchor_text.trim());
     if anchor.is_empty() {
         return true;
     }
-    markdown_visible_text(content).contains(&anchor)
+    if markdown_visible_text(content).contains(&anchor) {
+        return true;
+    }
+    // The lightweight visible-text pass above intentionally removes Markdown
+    // delimiters. Some of those characters are also ordinary visible text
+    // (`foo_bar`, literal `*`, ...), so fall back to the folded source before
+    // declaring an anchor stale. This is deliberately conservative: a false
+    // stale is worse than keeping a quote that still exists in source form.
+    fold_whitespace(content).contains(&anchor)
+}
+
+fn fold_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(c);
+            prev_space = false;
+        }
+    }
+    out
 }
 
 /// 列表读取时判定漂移并落库：返回本次**新置为 stale** 的批注 id。
@@ -493,6 +523,15 @@ mod tests {
         let content = "第一行\n第二行\n\n第三行";
         assert!(anchor_resolvable(content, "第一行 第二行"));
         assert!(anchor_resolvable(content, "第二行 第三行"));
+    }
+
+    #[test]
+    fn anchor_match_keeps_visible_markdown_punctuation() {
+        // Intraword underscores and escaped punctuation are visible text even
+        // though the lightweight Markdown pass treats them as syntax.
+        assert!(anchor_resolvable("文件名 foo_bar.md 说明", "foo_bar.md"));
+        assert!(anchor_resolvable("星号 \\* 字面量", "星号 * 字面量"));
+        assert!(anchor_resolvable("反引号 \\` 字面量", "反引号 ` 字面量"));
     }
 
     #[test]

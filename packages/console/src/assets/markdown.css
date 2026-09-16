@@ -27,6 +27,21 @@
   margin: 0.5rem 0;
 }
 
+/* TOC 锚点跳转时给标题留出呼吸空间（正文卡片顶部内边距）。 */
+.markdown-body :is(h1, h2, h3, h4) {
+  scroll-margin-top: 1rem;
+}
+
+/* 阅读页正文卡片（.md-reader-body）自带内边距，首尾元素不再叠加外边距，
+   避免卡片顶部/底部出现多余留白。 */
+.md-reader-body > :first-child {
+  margin-top: 0;
+}
+
+.md-reader-body > :last-child {
+  margin-bottom: 0;
+}
+
 .markdown-body ul,
 .markdown-body ol {
   margin: 0.5rem 0;
@@ -100,26 +115,32 @@
    优先 CSS Custom Highlight API（::highlight，不改 DOM）；
    退化路径用 mark.ann-fallback-*（同视觉）。 */
 
-::highlight(ann-open) {
-  background-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
-}
-
+::highlight(ann-open),
 ::highlight(ann-stale) {
-  background-color: color-mix(in oklab, var(--color-error) 22%, transparent);
+  background-color: transparent;
   text-decoration-line: underline;
   text-decoration-style: wavy;
   text-decoration-color: var(--color-error);
 }
 
-.markdown-body mark.ann-fallback-open {
-  background-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
-  color: inherit;
-}
-
+.markdown-body mark.ann-fallback-open,
 .markdown-body mark.ann-fallback-stale {
-  background-color: color-mix(in oklab, var(--color-error) 22%, transparent);
+  background-color: transparent;
   color: inherit;
   text-decoration-line: underline;
   text-decoration-style: wavy;
   text-decoration-color: var(--color-error);
+}
+
+.markdown-body mark.ann-content-flash {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-error);
+  animation: ann-content-flash 1.2s ease-in-out 2;
+}
+
+@keyframes ann-content-flash {
+  0%   { background-color: color-mix(in oklab, var(--color-primary) 45%, transparent); }
+  100% { background-color: transparent; }
 }

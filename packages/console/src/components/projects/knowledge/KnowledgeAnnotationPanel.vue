@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
+import { Check, Pencil, RotateCcw, Trash2 } from "@lucide/vue";
 import { AppField } from "@/ui";
 import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
 
@@ -10,30 +11,26 @@ import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
  * （选项 B：AI 可结案，人可重开兜底）。面板本身不做权限判断以外的数据操作，
  * 全部动作 emit 给宿主（宿主持有 useAnnotations 状态，桌面栏与移动抽屉两个
  * 实例共享同一数据源）。
+ *
+ * 新建批注走「正文选区工具条 → 模态框」（宿主渲染），面板只列已存在的批注，
+ * 列表按紧凑卡片排版：正文一行、元信息与图标操作同一行。
  */
 
 const props = defineProps<{
   annotations: KnowledgeAnnotation[];
   loading: boolean;
   currentUserId: string | null;
-  /** 选区带入的锚点（null = 整篇批注）。 */
-  compose: { anchorText: string; anchorPrefix: string; anchorSuffix: string } | null;
-  composeOpen: boolean;
   /** 点击正文高亮时设置的批注 id，联动滚动到这里。 */
   activeId: string | null;
 }>();
 
 const emit = defineEmits<{
-  "update:composeOpen": [value: boolean];
-  "submit-compose": [body: string];
   edit: [id: string, body: string];
   resolve: [id: string, outcome: "addressed" | "dismissed", note: string];
   reopen: [id: string];
   remove: [id: string];
+  "scroll-to-anchor": [id: string];
 }>();
-
-const composeBody = ref("");
-const composeSaving = ref(false);
 
 const editingId = ref<string | null>(null);
 const editingBody = ref("");
@@ -53,20 +50,24 @@ function timeLabel(iso: string): string {
   return new Date(iso).toLocaleString();
 }
 
+/** 紧凑列表里的短时间：同年只显示 月/日 时:分。 */
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleString(undefined, {
+    ...(sameYear ? {} : { year: "numeric" }),
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const outcomeLabel: Record<string, string> = {
   addressed: "已按批注处理",
   dismissed: "判断无需修改",
 };
-
-watch(
-  () => props.composeOpen,
-  open => {
-    if (open) {
-      composeBody.value = "";
-      void nextTick(() => (document.getElementById("ann-compose-body") as HTMLTextAreaElement | null)?.focus());
-    }
-  },
-);
 
 // 点击正文高亮 → 滚动到对应项并闪一下
 const itemRefs = new Map<string, HTMLElement>();
@@ -88,14 +89,6 @@ watch(
   },
 );
 
-async function submitCompose() {
-  if (!composeBody.value.trim() || composeSaving.value) return;
-  composeSaving.value = true;
-  emit("submit-compose", composeBody.value);
-  // 宿主会关闭 composeOpen；这里不重置 saving（由 v-if 卸载表单）
-  composeSaving.value = false;
-}
-
 function startEdit(ann: KnowledgeAnnotation) {
   editingId.value = ann.id;
   editingBody.value = ann.body;
@@ -114,6 +107,11 @@ function startResolve(id: string) {
   resolveNote.value = "";
 }
 
+function confirmResolve(id: string) {
+  emit("resolve", id, resolveOutcome.value, resolveNote.value.trim());
+  resolveId.value = null;
+}
+
 function anchorQuote(ann: KnowledgeAnnotation): string {
   return (ann.anchorText ?? "").trim();
 }
@@ -125,81 +123,85 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
       批注仅作用于本文档；跨需求的一次性方向请写入需求工作记忆，不要留在批注里。
     </p>
 
-    <!-- 新建（选中文本 → 内联批注；无选区 → 整篇批注） -->
-    <div v-if="composeOpen" class="card bg-base-200/60 card-compact">
-      <div class="card-body gap-2">
-        <blockquote
-          v-if="compose?.anchorText"
-          class="border-l-2 border-primary/60 pl-2 text-xs text-base-content/70 line-clamp-2"
-        >
-          {{ compose.anchorText }}
-        </blockquote>
-        <p v-else class="text-xs text-base-content/50">未选中文本，将作为整篇批注。</p>
-        <textarea
-          id="ann-compose-body"
-          v-model="composeBody"
-          class="textarea textarea-bordered w-full text-sm"
-          rows="3"
-          placeholder="写下你的批注…"
-        />
-        <div class="flex justify-end gap-2">
-          <button type="button" class="btn btn-ghost btn-xs" @click="emit('update:composeOpen', false)">
-            取消
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary btn-xs"
-            :disabled="!composeBody.trim() || composeSaving"
-            @click="submitCompose"
-          >
-            提交批注
-          </button>
-        </div>
-      </div>
-    </div>
-
     <div v-if="loading" class="flex justify-center py-6">
       <span class="loading loading-spinner" />
     </div>
 
     <template v-else>
       <!-- 未处理：open + stale（stale 带「原文已变更」标记，永不静默删除） -->
-      <div class="flex flex-col gap-2">
+      <div class="flex flex-col gap-1.5">
         <h4 class="text-sm font-medium">
           未处理
           <span class="badge badge-primary badge-sm ml-1">{{ openList().length }}</span>
         </h4>
         <p v-if="openList().length === 0" class="text-xs text-base-content/50">
-          暂无未处理批注。选中正文即可添加内联批注，也可对整篇发表批注。
+          暂无未处理批注。选中正文后点击浮出的「批注」即可添加。
         </p>
         <div
           v-for="ann in openList()"
           :key="ann.id"
           :ref="el => setItemRef(ann.id, el)"
-          class="card bg-base-200/40 card-compact scroll-mt-4"
+          class="card bg-base-200/40 scroll-mt-4"
         >
-          <div class="card-body gap-1.5">
-            <blockquote
-              v-if="anchorQuote(ann)"
-              class="border-l-2 border-base-content/20 pl-2 text-xs text-base-content/60 line-clamp-2"
+          <div class="card-body gap-1 p-2.5">
+            <button
+              type="button"
+              class="w-full whitespace-pre-wrap text-left text-[13px] leading-snug disabled:cursor-default disabled:opacity-100"
+              :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
+              :disabled="!anchorQuote(ann)"
+              :title="anchorQuote(ann) ? '点击定位原文' : undefined"
+              @click.stop="emit('scroll-to-anchor', ann.id)"
             >
-              {{ anchorQuote(ann) }}
-            </blockquote>
-            <p v-else class="text-xs text-base-content/50">整篇批注</p>
+              {{ ann.body }}
+            </button>
 
-            <p class="text-sm whitespace-pre-wrap">{{ ann.body }}</p>
-
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span v-if="ann.status === 'stale'" class="badge badge-warning badge-sm">原文已变更</span>
-              <span class="text-[11px] text-base-content/50">
-                {{ ann.createdBy }} · {{ timeLabel(ann.createdAt) }}
+            <div class="flex items-center gap-1.5">
+              <span v-if="ann.status === 'stale'" class="badge badge-warning badge-xs shrink-0">
+                原文已变更
               </span>
+              <span
+                class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
+              >
+                {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
+              </span>
+              <div class="flex shrink-0 items-center gap-0.5">
+                <template v-if="isAuthor(ann)">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-square btn-xs"
+                    aria-label="编辑批注"
+                    title="编辑"
+                    @click.stop="startEdit(ann)"
+                  >
+                    <Pencil :size="13" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-square btn-xs text-error"
+                    aria-label="删除批注"
+                    title="删除"
+                    @click.stop="emit('remove', ann.id)"
+                  >
+                    <Trash2 :size="13" aria-hidden="true" />
+                  </button>
+                </template>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-square btn-xs"
+                  aria-label="结案"
+                  title="结案"
+                  @click.stop="startResolve(ann.id)"
+                >
+                  <Check :size="13" aria-hidden="true" />
+                </button>
+              </div>
             </div>
 
             <!-- 结案表单（选项 B：须给依据，人可对照正文核查） -->
             <div v-if="resolveId === ann.id" class="mt-1 flex flex-col gap-1.5 border-t border-base-300 pt-2">
-              <div class="flex gap-2">
-                <label class="label cursor-pointer gap-1 text-xs">
+              <div class="flex flex-wrap gap-2">
+                <label class="label cursor-pointer gap-1 p-0 text-xs">
                   <input
                     v-model="resolveOutcome"
                     type="radio"
@@ -209,7 +211,7 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
                   />
                   已按批注处理
                 </label>
-                <label class="label cursor-pointer gap-1 text-xs">
+                <label class="label cursor-pointer gap-1 p-0 text-xs">
                   <input
                     v-model="resolveOutcome"
                     type="radio"
@@ -231,24 +233,10 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
               </AppField>
               <div class="flex justify-end gap-2">
                 <button type="button" class="btn btn-ghost btn-xs" @click="resolveId = null">取消</button>
-                <button
-                  type="button"
-                  class="btn btn-primary btn-xs"
-                  @click="emit('resolve', ann.id, resolveOutcome, resolveNote.trim()); resolveId = null"
-                >
+                <button type="button" class="btn btn-primary btn-xs" @click="confirmResolve(ann.id)">
                   确认结案
                 </button>
               </div>
-            </div>
-
-            <div v-else class="mt-0.5 flex justify-end gap-1">
-              <template v-if="isAuthor(ann)">
-                <button type="button" class="btn btn-ghost btn-xs" @click="startEdit(ann)">编辑</button>
-                <button type="button" class="btn btn-ghost btn-xs text-error" @click="emit('remove', ann.id)">
-                  删除
-                </button>
-              </template>
-              <button type="button" class="btn btn-ghost btn-xs" @click="startResolve(ann.id)">结案</button>
             </div>
 
             <!-- 编辑态 -->
@@ -280,35 +268,53 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
           已处理
           <span class="badge badge-ghost badge-sm ml-1">{{ resolvedList().length }}</span>
         </summary>
-        <div class="collapse-content flex flex-col gap-2">
-          <div v-for="ann in resolvedList()" :key="ann.id" :ref="el => setItemRef(ann.id, el)" class="card bg-base-100 card-compact">
-            <div class="card-body gap-1.5">
-              <blockquote
-                v-if="anchorQuote(ann)"
-                class="border-l-2 border-base-content/20 pl-2 text-xs text-base-content/60 line-clamp-2"
+        <div class="collapse-content flex flex-col gap-1.5">
+          <div
+            v-for="ann in resolvedList()"
+            :key="ann.id"
+            :ref="el => setItemRef(ann.id, el)"
+            class="card bg-base-100"
+          >
+            <div class="card-body gap-1 p-2.5">
+              <button
+                type="button"
+                class="w-full whitespace-pre-wrap text-left text-[13px] leading-snug text-base-content/70 disabled:cursor-default disabled:opacity-100"
+                :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
+                :disabled="!anchorQuote(ann)"
+                :title="anchorQuote(ann) ? '点击定位原文' : undefined"
+                @click.stop="emit('scroll-to-anchor', ann.id)"
               >
-                {{ anchorQuote(ann) }}
-              </blockquote>
-              <p class="text-sm whitespace-pre-wrap text-base-content/70">{{ ann.body }}</p>
-              <div class="flex flex-wrap items-center gap-1.5">
+                {{ ann.body }}
+              </button>
+              <div class="flex items-center gap-1.5">
                 <span
-                  class="badge badge-sm"
+                  class="badge badge-xs shrink-0"
                   :class="ann.outcome === 'dismissed' ? 'badge-ghost' : 'badge-success'"
                 >
                   {{ outcomeLabel[ann.outcome ?? ""] ?? "已处理" }}
                 </span>
-                <span class="text-[11px] text-base-content/50">
-                  {{ ann.createdBy }} · {{ timeLabel(ann.createdAt) }}
+                <span
+                  class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                  :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
+                >
+                  {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
                 </span>
-              </div>
-              <p v-if="ann.resolvedNote" class="rounded-box bg-base-200/60 px-2 py-1 text-xs text-base-content/70">
-                依据：{{ ann.resolvedNote }}
-              </p>
-              <div class="flex justify-end">
-                <button type="button" class="btn btn-ghost btn-xs" @click="emit('reopen', ann.id)">
-                  重新打开
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-square btn-xs shrink-0"
+                  aria-label="重新打开"
+                  title="重新打开"
+                  @click.stop="emit('reopen', ann.id)"
+                >
+                  <RotateCcw :size="13" aria-hidden="true" />
                 </button>
               </div>
+              <p
+                v-if="ann.resolvedNote"
+                class="rounded-box bg-base-200/60 px-2 py-1 text-[11px] text-base-content/70"
+              >
+                依据：{{ ann.resolvedNote }}
+              </p>
             </div>
           </div>
         </div>

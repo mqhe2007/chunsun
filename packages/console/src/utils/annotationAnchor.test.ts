@@ -107,6 +107,21 @@ describe("locateAnnotations", () => {
     ]);
     expect(out.map(o => o.id)).toEqual(["a", "b"]);
   });
+
+  test("使用入库前后文消歧重复锚点", () => {
+    const repeated = docFrom("第一次必须赢 第二次必须稳");
+    const out = locateAnnotations(repeated, [
+      {
+        id: "second",
+        status: "open",
+        anchorText: "必须",
+        anchorPrefix: "第二次",
+        anchorSuffix: "稳",
+      },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.ranges[0]!.start).toBe(10);
+  });
 });
 
 describe("buildFoldedDoc", () => {

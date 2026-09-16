@@ -172,13 +172,19 @@ export type LocatedAnnotation = {
  */
 export function locateAnnotations(
   doc: FoldedDoc,
-  annotations: Array<{ id: string; status: string; anchorText?: string | null }>,
+  annotations: Array<{
+    id: string;
+    status: string;
+    anchorText?: string | null;
+    anchorPrefix?: string | null;
+    anchorSuffix?: string | null;
+  }>,
 ): LocatedAnnotation[] {
   const out: LocatedAnnotation[] = [];
   for (const ann of annotations) {
     if (ann.status !== "open" && ann.status !== "stale") continue;
     if (!ann.anchorText || !ann.anchorText.trim()) continue;
-    const ranges = locateAnchor(doc, ann.anchorText);
+    const ranges = locateAnchor(doc, ann.anchorText, ann.anchorPrefix, ann.anchorSuffix);
     if (ranges) out.push({ id: ann.id, status: ann.status, ranges });
   }
   return out;

@@ -1,6 +1,7 @@
 import { nextTick, onBeforeUnmount, watch, type Ref } from "vue";
 import {
   buildFoldedDoc,
+  locateAnchor,
   locateAnnotations,
   type AnchorRange,
   type FoldedDoc,
@@ -32,6 +33,7 @@ export function useAnnotationHighlights(
   let folded: FoldedDoc | null = null;
   let located: Array<{ id: string; status: string; ranges: AnchorRange[] }> = [];
   let scheduled = false;
+  let flashTimer: number | null = null;
 
   function clearHighlights() {
     if (supportsHighlights) {
@@ -129,13 +131,75 @@ export function useAnnotationHighlights(
     return null;
   }
 
+  /** 结束闪烁：拆掉临时 <mark>、还原文本节点，并刷新缓存区间。 */
+  function endFlash() {
+    if (flashTimer !== null) {
+      window.clearTimeout(flashTimer);
+      flashTimer = null;
+    }
+    const marks = document.querySelectorAll("mark.ann-content-flash");
+    if (marks.length === 0) return;
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      if (!parent) continue;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      mark.remove();
+      parent.normalize();
+    }
+    // 包裹/还原会拆合文本节点，缓存的 node 引用随之失效；重算一次，
+    // 保证再次点击卡片（或点正文高亮）仍能命中。
+    schedule();
+  }
+
+  /** 从面板点击批注 → 滚动到正文锚点并闪烁。 */
+  function scrollToAnchor(id: string) {
+    const ann = annotations.value.find(item => item.id === id);
+    if (!ann?.anchorText?.trim()) return;
+
+    // 每次都按当前 DOM 重新定位：可重复点击，不依赖上一次的缓存区间。
+    // （resolved 批注刻意不参与常态高亮，这里也从正文临时定位。）
+    endFlash();
+    const root = getRoot();
+    if (!root) return;
+    const body = root.querySelector(".markdown-body") ?? root;
+    const ranges =
+      locateAnchor(buildFoldedDoc(body), ann.anchorText, ann.anchorPrefix, ann.anchorSuffix) ?? [];
+    if (ranges.length === 0) return;
+
+    // 用临时 <mark> 做闪烁。先获得 mark 再滚动，能精确把选中文本放到
+    // 视口中央；长段落里只滚 parentElement 往往仍然看不到锚点。
+    const marks: HTMLElement[] = [];
+    for (const r of ranges) {
+      try {
+        const range = new Range();
+        range.setStart(r.node, r.start);
+        range.setEnd(r.node, r.end);
+        const mark = document.createElement("mark");
+        mark.className = "ann-content-flash";
+        range.surroundContents(mark);
+        marks.push(mark);
+      } catch {
+        // 跨节点边界：跳过该段
+      }
+    }
+
+    // 包裹失败（锚点跨行内元素）时退化为滚动锚点所在块，至少保证「可见」。
+    const scrollTarget: Element | null =
+      marks[0] ?? ranges[0]?.node.parentElement ?? body;
+    scrollTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    flashTimer = window.setTimeout(endFlash, 2400);
+  }
+
   watch([annotations, enabled], schedule, { deep: true });
 
   onBeforeUnmount(() => {
+    if (flashTimer !== null) window.clearTimeout(flashTimer);
+    flashTimer = null;
     clearHighlights();
     folded = null;
     located = [];
   });
 
-  return { recompute: schedule, hitTest, supportsHighlights };
+  return { recompute: schedule, hitTest, scrollToAnchor, supportsHighlights };
 }

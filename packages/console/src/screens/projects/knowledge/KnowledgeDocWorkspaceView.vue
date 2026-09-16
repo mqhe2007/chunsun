@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
-import { AppField, AppPage, confirm, useToast } from "@/ui";
+import { MessageSquarePlus } from "@lucide/vue";
+import { AppField, AppModal, AppPage, confirm, useToast } from "@/ui";
 import MarkdownReader from "@/components/common/MarkdownReader.vue";
 import MarkdownCodeMirror from "@/components/common/MarkdownCodeMirror.vue";
 import KnowledgeSharePanel from "@/components/projects/knowledge/KnowledgeSharePanel.vue";
@@ -9,6 +10,10 @@ import KnowledgeAnnotationPanel from "@/components/projects/knowledge/KnowledgeA
 import { useAnnotations } from "@/composables/useAnnotations";
 import { useAnnotationHighlights } from "@/composables/useAnnotationHighlights";
 import { normalizeAnchorText } from "@/utils/annotationAnchor";
+import {
+  selectionToolbarPlacement,
+  type SelectionToolbarPlacement,
+} from "@/utils/selectionToolbar";
 import { useAuthStore } from "@/stores/auth";
 import { api } from "@/utils/api";
 import { renderMarkdown } from "@/utils/markdown";
@@ -75,6 +80,10 @@ const annPanelOpen = ref(true);
 const annDrawerOpen = ref(false);
 const annCompose = ref<{ anchorText: string; anchorPrefix: string; anchorSuffix: string } | null>(null);
 const annComposeOpen = ref(false);
+const composeBody = ref("");
+const composeSaving = ref(false);
+/** 正文选区旁的浮层工具条位置（视口坐标；null = 不显示）。 */
+const selectionToolbar = ref<SelectionToolbarPlacement | null>(null);
 const annActiveId = ref<string | null>(null);
 
 const annHighlights = useAnnotationHighlights(
@@ -257,7 +266,7 @@ function onReadClick(e: MouseEvent) {
   if (id) annActiveId.value = id;
 }
 
-/** 选区松开 → 预填锚点，打开批注面板的新建表单。 */
+/** 选区松开 → 记下锚点并在选区旁浮出工具条（工具条只负责“要不要批注”）。 */
 function onReadPointerup(e: PointerEvent) {
   if (isEdit.value || e.button !== 0) return;
   const sel = window.getSelection();
@@ -272,9 +281,45 @@ function onReadPointerup(e: PointerEvent) {
     anchorPrefix: sliceContext(range.startContainer, range.startOffset, -1),
     anchorSuffix: sliceContext(range.endContainer, range.endOffset, 1),
   };
-  annComposeOpen.value = true;
-  if (!window.matchMedia("(min-width: 1024px)").matches) annDrawerOpen.value = true;
+  selectionToolbar.value = selectionToolbarPlacement(range.getBoundingClientRect(), {
+    width: window.innerWidth,
+  });
 }
+
+function hideSelectionToolbar() {
+  selectionToolbar.value = null;
+}
+
+/** 工具条「批注」→ 模态框写正文；锚点已在选区松开时记下。 */
+function openCompose() {
+  selectionToolbar.value = null;
+  if (!annCompose.value) return;
+  annComposeOpen.value = true;
+}
+
+/** 点到工具条以外（含点正文、点面板）就收起工具条。 */
+function onDocumentPointerDown(e: MouseEvent) {
+  if (!selectionToolbar.value) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest("[data-ann-toolbar]")) return;
+  hideSelectionToolbar();
+}
+
+function onDocumentKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") hideSelectionToolbar();
+}
+
+// 打开模态框时清空并聚焦；关闭时丢掉锚点，避免串到下一条批注。
+watch(annComposeOpen, open => {
+  composeBody.value = "";
+  if (!open) {
+    annCompose.value = null;
+    return;
+  }
+  void nextTick(() =>
+    (document.getElementById("ann-compose-body") as HTMLTextAreaElement | null)?.focus(),
+  );
+});
 
 /** 取锚点前后文片段（同节点内最多 20 字符，仅供人眼定位，不做匹配保证）。 */
 function sliceContext(node: Node, offset: number, dir: -1 | 1): string {
@@ -283,21 +328,25 @@ function sliceContext(node: Node, offset: number, dir: -1 | 1): string {
   return dir < 0 ? t.slice(Math.max(0, offset - 20), offset) : t.slice(offset, offset + 20);
 }
 
-async function submitCompose(body: string) {
+async function submitCompose() {
+  const body = composeBody.value.trim();
+  if (!body || composeSaving.value) return;
+  composeSaving.value = true;
   const payload = { body, ...(annCompose.value ?? {}) };
   try {
     const created = await createAnn(payload);
     if (!created) {
+      // 保留输入，便于直接重试
       toast.error("添加失败");
-    } else {
-      toast.success("已添加批注");
-      annActiveId.value = created.id;
+      return;
     }
+    toast.success("已添加批注");
+    annActiveId.value = created.id;
+    annComposeOpen.value = false;
   } catch {
     toast.error("添加失败");
   } finally {
-    annComposeOpen.value = false;
-    annCompose.value = null;
+    composeSaving.value = false;
   }
 }
 
@@ -351,6 +400,15 @@ async function onRemoveAnnotation(id: string) {
   }
 }
 
+async function onScrollToAnchor(id: string) {
+  // 移动端抽屉会盖住正文；先关闭再定位，否则用户看不到滚动结果。
+  if (annDrawerOpen.value) {
+    annDrawerOpen.value = false;
+    await nextTick();
+  }
+  annHighlights.scrollToAnchor(id);
+}
+
 // 内容（重新）渲染后重算内联高亮；编辑态不高亮
 watch([content, isEdit, loading, notFound], () => {
   if (!isEdit.value && !loading.value && !notFound.value) annHighlights.recompute();
@@ -358,6 +416,7 @@ watch([content, isEdit, loading, notFound], () => {
 
 watch([projectId, docKey], () => {
   annActiveId.value = null;
+  hideSelectionToolbar();
   annComposeOpen.value = false;
   annCompose.value = null;
   annDrawerOpen.value = false;
@@ -366,8 +425,19 @@ watch([projectId, docKey], () => {
 });
 
 onMounted(() => {
+  document.addEventListener("pointerdown", onDocumentPointerDown, true);
+  document.addEventListener("scroll", hideSelectionToolbar, true);
+  window.addEventListener("resize", hideSelectionToolbar);
+  document.addEventListener("keydown", onDocumentKeydown);
   void loadDoc();
   void loadAnnotations();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+  document.removeEventListener("scroll", hideSelectionToolbar, true);
+  window.removeEventListener("resize", hideSelectionToolbar);
+  document.removeEventListener("keydown", onDocumentKeydown);
 });
 </script>
 
@@ -375,7 +445,6 @@ onMounted(() => {
   <AppPage
     :title="pageTitle"
     :back="{ to: `/projects/${projectId}/knowledge`, label: '返回知识库' }"
-    fill
   >
     <template #title-extra>
       <span v-if="isSystem" class="badge badge-ghost">固定</span>
@@ -481,28 +550,28 @@ onMounted(() => {
       <div class="drawer drawer-end min-h-0 flex-1">
         <input id="ann-drawer-toggle" v-model="annDrawerOpen" type="checkbox" class="drawer-toggle" />
         <div
-          class="drawer-content flex min-h-0 min-w-0 flex-col gap-3 lg:flex-row lg:items-start"
+          class="drawer-content flex min-h-0 min-w-0 flex-col gap-4 lg:flex-row lg:items-start"
           @click="onReadClick"
           @pointerup="onReadPointerup"
         >
           <MarkdownReader :content="content" class="min-w-0 flex-1" />
-          <aside v-if="annPanelOpen" class="hidden w-80 shrink-0 lg:block xl:w-96">
+          <aside
+            v-if="annPanelOpen"
+            class="hidden w-64 shrink-0 lg:sticky lg:top-4 lg:block xl:w-72"
+          >
             <div
-              class="rounded-box border border-base-300 bg-base-100 p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-10rem)] lg:overflow-y-auto"
+              class="rounded-box border border-base-300 bg-base-100 p-3 shadow-sm lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto"
             >
               <KnowledgeAnnotationPanel
                 :annotations="annList"
                 :loading="annLoading"
                 :current-user-id="authStore.userId"
-                :compose="annCompose"
-                :compose-open="annComposeOpen"
                 :active-id="annActiveId"
-                @update:compose-open="annComposeOpen = $event"
-                @submit-compose="submitCompose"
                 @edit="onEditAnnotation"
                 @resolve="onResolveAnnotation"
                 @reopen="onReopenAnnotation"
                 @remove="onRemoveAnnotation"
+                @scroll-to-anchor="onScrollToAnchor"
               />
             </div>
           </aside>
@@ -514,19 +583,71 @@ onMounted(() => {
               :annotations="annList"
               :loading="annLoading"
               :current-user-id="authStore.userId"
-              :compose="annCompose"
-              :compose-open="annComposeOpen"
               :active-id="annActiveId"
-              @update:compose-open="annComposeOpen = $event"
-              @submit-compose="submitCompose"
               @edit="onEditAnnotation"
               @resolve="onResolveAnnotation"
               @reopen="onReopenAnnotation"
               @remove="onRemoveAnnotation"
+              @scroll-to-anchor="onScrollToAnchor"
             />
           </aside>
         </div>
       </div>
+
+      <!-- 选区工具条：teleport 到 body，用视口坐标 fixed 定位，避免被滚动容器裁剪 -->
+      <Teleport to="body">
+        <div
+          v-if="selectionToolbar"
+          data-ann-toolbar
+          class="fixed z-[70] whitespace-nowrap"
+          :style="{
+            left: `${selectionToolbar.x}px`,
+            top: `${selectionToolbar.y}px`,
+            transform: `translate(-50%, ${selectionToolbar.below ? '0' : '-100%'})`,
+          }"
+        >
+          <div class="flex items-center rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+            <button type="button" class="btn btn-ghost btn-xs gap-1" @click="openCompose">
+              <MessageSquarePlus :size="14" aria-hidden="true" />
+              批注
+            </button>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- 新建批注：先框选正文（工具条）→ 这里写正文 -->
+      <AppModal v-model="annComposeOpen" title="添加批注">
+        <div class="flex flex-col gap-3">
+          <blockquote
+            v-if="annCompose?.anchorText"
+            class="max-h-24 overflow-y-auto border-l-2 border-primary/60 pl-2 text-xs leading-relaxed text-base-content/70"
+          >
+            {{ annCompose.anchorText }}
+          </blockquote>
+          <p v-else class="text-xs text-base-content/50">未选中文本，将作为整篇批注。</p>
+          <textarea
+            id="ann-compose-body"
+            v-model="composeBody"
+            class="textarea textarea-bordered w-full text-sm"
+            rows="4"
+            placeholder="写下你的批注…"
+            @keydown.ctrl.enter="submitCompose"
+            @keydown.meta.enter="submitCompose"
+          />
+        </div>
+        <template #footer>
+          <button type="button" class="btn btn-ghost" @click="annComposeOpen = false">取消</button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="!composeBody.trim() || composeSaving"
+            @click="submitCompose"
+          >
+            <span v-if="composeSaving" class="loading loading-spinner loading-xs" />
+            提交批注
+          </button>
+        </template>
+      </AppModal>
     </div>
 
     <KnowledgeSharePanel
