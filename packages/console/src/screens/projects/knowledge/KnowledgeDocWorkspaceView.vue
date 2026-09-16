@@ -5,6 +5,11 @@ import { AppField, AppPage, confirm, useToast } from "@/ui";
 import MarkdownReader from "@/components/common/MarkdownReader.vue";
 import MarkdownCodeMirror from "@/components/common/MarkdownCodeMirror.vue";
 import KnowledgeSharePanel from "@/components/projects/knowledge/KnowledgeSharePanel.vue";
+import KnowledgeAnnotationPanel from "@/components/projects/knowledge/KnowledgeAnnotationPanel.vue";
+import { useAnnotations } from "@/composables/useAnnotations";
+import { useAnnotationHighlights } from "@/composables/useAnnotationHighlights";
+import { normalizeAnchorText } from "@/utils/annotationAnchor";
+import { useAuthStore } from "@/stores/auth";
 import { api } from "@/utils/api";
 import { renderMarkdown } from "@/utils/markdown";
 
@@ -46,6 +51,37 @@ const isSystem = computed(() => isConstitution.value || isMemory.value || system
 const shareable = computed(() => !isSystem.value);
 const dirty = computed(() => content.value !== savedContent.value);
 const previewHtml = computed(() => renderMarkdown(content.value));
+
+// ---- 批注（需求 u-WPvdvYh4Fw：方案甲第三栏 + 内联高亮 + 选项 B 结案）----
+
+const authStore = useAuthStore();
+const {
+  annotations: annList,
+  loading: annLoading,
+  openCount,
+  load: loadAnnList,
+  create: createAnn,
+  updateBody: updateAnnBody,
+  setStatus: setAnnStatus,
+  remove: removeAnn,
+} = useAnnotations(
+  () => projectId.value,
+  () => docKey.value,
+);
+
+const readArea = ref<HTMLElement | null>(null);
+/** 桌面端第三栏折叠态；<lg 走 drawer（annDrawerOpen）。 */
+const annPanelOpen = ref(true);
+const annDrawerOpen = ref(false);
+const annCompose = ref<{ anchorText: string; anchorPrefix: string; anchorSuffix: string } | null>(null);
+const annComposeOpen = ref(false);
+const annActiveId = ref<string | null>(null);
+
+const annHighlights = useAnnotationHighlights(
+  () => readArea.value,
+  annList,
+  computed(() => !isEdit.value),
+);
 
 const pageTitle = computed(() => {
   if (isConstitution.value) return CONSTITUTION_TITLE;
@@ -196,11 +232,143 @@ onBeforeRouteLeave(async () => {
   });
 });
 
-watch([projectId, docKey], () => {
-  void loadDoc();
+// ---- 批注：加载 / 选区创建 / 高亮联动 / 动作处理 ----
+
+async function loadAnnotations() {
+  // 宪法 / 记忆 / 自定义文档都走同一端点；docRef 形态由后端 parse_doc_ref 承接
+  try {
+    await loadAnnList();
+  } catch {
+    toast.warn("批注加载失败");
+  }
+}
+
+function toggleAnnotationPanel() {
+  if (window.matchMedia("(min-width: 1024px)").matches) {
+    annPanelOpen.value = !annPanelOpen.value;
+  } else {
+    annDrawerOpen.value = true;
+  }
+}
+
+/** 点击正文：命中内联高亮 → 右栏对应项滚动 + 闪烁。 */
+function onReadClick(e: MouseEvent) {
+  const id = annHighlights.hitTest(e.clientX, e.clientY);
+  if (id) annActiveId.value = id;
+}
+
+/** 选区松开 → 预填锚点，打开批注面板的新建表单。 */
+function onReadPointerup(e: PointerEvent) {
+  if (isEdit.value || e.button !== 0) return;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  const body = (e.currentTarget as HTMLElement).querySelector(".markdown-body");
+  if (!body || !body.contains(range.commonAncestorContainer)) return;
+  const anchorText = normalizeAnchorText(sel.toString());
+  if (!anchorText) return;
+  annCompose.value = {
+    anchorText,
+    anchorPrefix: sliceContext(range.startContainer, range.startOffset, -1),
+    anchorSuffix: sliceContext(range.endContainer, range.endOffset, 1),
+  };
+  annComposeOpen.value = true;
+  if (!window.matchMedia("(min-width: 1024px)").matches) annDrawerOpen.value = true;
+}
+
+/** 取锚点前后文片段（同节点内最多 20 字符，仅供人眼定位，不做匹配保证）。 */
+function sliceContext(node: Node, offset: number, dir: -1 | 1): string {
+  if (node.nodeType !== Node.TEXT_NODE) return "";
+  const t = node.textContent ?? "";
+  return dir < 0 ? t.slice(Math.max(0, offset - 20), offset) : t.slice(offset, offset + 20);
+}
+
+async function submitCompose(body: string) {
+  const payload = { body, ...(annCompose.value ?? {}) };
+  try {
+    const created = await createAnn(payload);
+    if (!created) {
+      toast.error("添加失败");
+    } else {
+      toast.success("已添加批注");
+      annActiveId.value = created.id;
+    }
+  } catch {
+    toast.error("添加失败");
+  } finally {
+    annComposeOpen.value = false;
+    annCompose.value = null;
+  }
+}
+
+async function onEditAnnotation(id: string, body: string) {
+  try {
+    if (await updateAnnBody(id, body)) toast.success("已更新");
+    else toast.error("更新失败");
+  } catch {
+    toast.error("更新失败");
+  }
+}
+
+async function onResolveAnnotation(
+  id: string,
+  outcome: "addressed" | "dismissed",
+  note: string,
+) {
+  try {
+    if (await setAnnStatus(id, "resolved", { outcome, resolvedNote: note || undefined })) {
+      toast.success("已结案");
+    } else {
+      toast.error("结案失败");
+    }
+  } catch {
+    toast.error("结案失败");
+  }
+}
+
+async function onReopenAnnotation(id: string) {
+  try {
+    if (await setAnnStatus(id, "open")) toast.success("已重新打开");
+    else toast.error("重新打开失败");
+  } catch {
+    toast.error("重新打开失败");
+  }
+}
+
+async function onRemoveAnnotation(id: string) {
+  const yes = await confirm({
+    title: "删除批注",
+    message: "批注删除后不可恢复，确定删除？",
+    confirmLabel: "删除",
+    danger: true,
+  });
+  if (!yes) return;
+  try {
+    if (await removeAnn(id)) toast.success("已删除");
+    else toast.error("删除失败");
+  } catch {
+    toast.error("删除失败");
+  }
+}
+
+// 内容（重新）渲染后重算内联高亮；编辑态不高亮
+watch([content, isEdit, loading, notFound], () => {
+  if (!isEdit.value && !loading.value && !notFound.value) annHighlights.recompute();
 });
 
-onMounted(loadDoc);
+watch([projectId, docKey], () => {
+  annActiveId.value = null;
+  annComposeOpen.value = false;
+  annCompose.value = null;
+  annDrawerOpen.value = false;
+  void loadDoc();
+  void loadAnnotations();
+});
+
+onMounted(() => {
+  void loadDoc();
+  void loadAnnotations();
+});
 </script>
 
 <template>
@@ -225,6 +393,17 @@ onMounted(loadDoc);
     </template>
     <template #actions>
       <template v-if="!loading && !notFound">
+        <button
+          v-if="!isEdit"
+          type="button"
+          class="btn btn-ghost"
+          @click="toggleAnnotationPanel"
+        >
+          批注
+          <span class="badge badge-sm" :class="openCount > 0 ? 'badge-primary' : 'badge-ghost'">
+            {{ openCount }}
+          </span>
+        </button>
         <button
           v-if="shareable"
           type="button"
@@ -297,8 +476,57 @@ onMounted(loadDoc);
         </div>
       </div>
     </div>
-    <div v-else class="workspace-read">
-      <MarkdownReader :content="content" />
+    <!-- 方案甲三栏：TOC（MarkdownReader 内）｜正文｜批注栏；<lg 批注退化为抽屉 -->
+    <div v-else ref="readArea" class="workspace-read flex min-h-0 flex-1 flex-col">
+      <div class="drawer drawer-end min-h-0 flex-1">
+        <input id="ann-drawer-toggle" v-model="annDrawerOpen" type="checkbox" class="drawer-toggle" />
+        <div
+          class="drawer-content flex min-h-0 min-w-0 flex-col gap-3 lg:flex-row lg:items-start"
+          @click="onReadClick"
+          @pointerup="onReadPointerup"
+        >
+          <MarkdownReader :content="content" class="min-w-0 flex-1" />
+          <aside v-if="annPanelOpen" class="hidden w-80 shrink-0 lg:block xl:w-96">
+            <div
+              class="rounded-box border border-base-300 bg-base-100 p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-10rem)] lg:overflow-y-auto"
+            >
+              <KnowledgeAnnotationPanel
+                :annotations="annList"
+                :loading="annLoading"
+                :current-user-id="authStore.userId"
+                :compose="annCompose"
+                :compose-open="annComposeOpen"
+                :active-id="annActiveId"
+                @update:compose-open="annComposeOpen = $event"
+                @submit-compose="submitCompose"
+                @edit="onEditAnnotation"
+                @resolve="onResolveAnnotation"
+                @reopen="onReopenAnnotation"
+                @remove="onRemoveAnnotation"
+              />
+            </div>
+          </aside>
+        </div>
+        <div class="drawer-side z-40 lg:hidden">
+          <label for="ann-drawer-toggle" class="drawer-overlay" aria-label="关闭批注" />
+          <aside class="h-full w-full max-w-md overflow-y-auto bg-base-100 p-3">
+            <KnowledgeAnnotationPanel
+              :annotations="annList"
+              :loading="annLoading"
+              :current-user-id="authStore.userId"
+              :compose="annCompose"
+              :compose-open="annComposeOpen"
+              :active-id="annActiveId"
+              @update:compose-open="annComposeOpen = $event"
+              @submit-compose="submitCompose"
+              @edit="onEditAnnotation"
+              @resolve="onResolveAnnotation"
+              @reopen="onReopenAnnotation"
+              @remove="onRemoveAnnotation"
+            />
+          </aside>
+        </div>
+      </div>
     </div>
 
     <KnowledgeSharePanel

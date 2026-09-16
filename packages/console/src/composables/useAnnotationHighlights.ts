@@ -1,0 +1,141 @@
+import { nextTick, onBeforeUnmount, watch, type Ref } from "vue";
+import {
+  buildFoldedDoc,
+  locateAnnotations,
+  type AnchorRange,
+  type FoldedDoc,
+} from "@/utils/annotationAnchor";
+import type { KnowledgeAnnotation } from "./useAnnotations";
+
+const OPEN_KEY = "ann-open";
+const STALE_KEY = "ann-stale";
+
+/**
+ * 阅读页内联高亮（需求 u-WPvdvYh4Fw 第 2 步）。
+ *
+ * **纯附加**：内容仍由 `renderMarkdown` 一次性输出（v-html），本 composable 只在
+ * 渲染完成后**读取** DOM 做定位，绝不改渲染管线输出的结构——TOC 锚点跳转与
+ * 滚动高亮因此零回归。
+ *
+ * 优先 CSS Custom Highlight API（`CSS.highlights` + Range）：零 DOM 修改。
+ * 不支持时退化为 <mark> 包裹（同节点内的 Range 逐段包裹），v-html 重渲染
+ * 会自然清掉旧包裹，重算时再补。
+ *
+ * 用法：`watch` 触发重算；`hitTest(x, y)` 供点击命中（把高亮连到右栏对应项）。
+ */
+export function useAnnotationHighlights(
+  getRoot: () => HTMLElement | null,
+  annotations: Ref<KnowledgeAnnotation[]>,
+  enabled: Ref<boolean>,
+) {
+  const supportsHighlights = typeof CSS !== "undefined" && "highlights" in CSS;
+  let folded: FoldedDoc | null = null;
+  let located: Array<{ id: string; status: string; ranges: AnchorRange[] }> = [];
+  let scheduled = false;
+
+  function clearHighlights() {
+    if (supportsHighlights) {
+      CSS.highlights.delete(OPEN_KEY);
+      CSS.highlights.delete(STALE_KEY);
+    }
+    const root = getRoot();
+    root?.querySelectorAll("mark[data-ann-id]").forEach(m => {
+      const parent = m.parentNode;
+      if (parent) {
+        while (m.firstChild) parent.insertBefore(m.firstChild, m);
+        m.remove();
+        parent.normalize(); // 合回相邻文本节点，尽量还原 DOM
+      }
+    });
+  }
+
+  function recompute() {
+    clearHighlights();
+    const root = getRoot();
+    if (!root || !enabled.value) return;
+    const body = root.querySelector(".markdown-body") ?? root;
+    folded = buildFoldedDoc(body);
+    located = locateAnnotations(folded, annotations.value) as Array<{
+      id: string;
+      status: string;
+      ranges: AnchorRange[];
+    }>;
+
+    if (supportsHighlights) {
+      const open = new Highlight();
+      const stale = new Highlight();
+      for (const item of located) {
+        for (const r of item.ranges) {
+          const range = new Range();
+          range.setStart(r.node, r.start);
+          range.setEnd(r.node, r.end);
+          (item.status === "stale" ? stale : open).add(range);
+        }
+      }
+      if (open.size > 0) CSS.highlights.set(OPEN_KEY, open);
+      if (stale.size > 0) CSS.highlights.set(STALE_KEY, stale);
+    } else {
+      // 退化路径：逐段包裹（Range 都在单个文本节点内，surroundContents 可用）
+      for (const item of located) {
+        for (const r of item.ranges) {
+          try {
+            const range = new Range();
+            range.setStart(r.node, r.start);
+            range.setEnd(r.node, r.end);
+            const mark = document.createElement("mark");
+            mark.dataset.annId = item.id;
+            mark.className = item.status === "stale" ? "ann-fallback-stale" : "ann-fallback-open";
+            range.surroundContents(mark);
+          } catch {
+            // 包裹失败（节点边界意外）：放弃该段，不影响其余高亮
+          }
+        }
+      }
+    }
+  }
+
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    void nextTick(() => {
+      scheduled = false;
+      recompute();
+    });
+  }
+
+  /** 点击命中：返回该坐标下被高亮的批注 id（供联动右栏）。 */
+  function hitTest(x: number, y: number): string | null {
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    let node: Node | null = null;
+    let offset = 0;
+    if (doc.caretRangeFromPoint) {
+      const r = doc.caretRangeFromPoint(x, y);
+      node = r?.startContainer ?? null;
+      offset = r?.startOffset ?? 0;
+    } else if (doc.caretPositionFromPoint) {
+      const p = doc.caretPositionFromPoint(x, y);
+      node = p?.offsetNode ?? null;
+      offset = p?.offset ?? 0;
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+    for (const item of located) {
+      for (const r of item.ranges) {
+        if (r.node === node && offset >= r.start && offset <= r.end) return item.id;
+      }
+    }
+    return null;
+  }
+
+  watch([annotations, enabled], schedule, { deep: true });
+
+  onBeforeUnmount(() => {
+    clearHighlights();
+    folded = null;
+    located = [];
+  });
+
+  return { recompute: schedule, hitTest, supportsHighlights };
+}
