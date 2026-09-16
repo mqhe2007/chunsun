@@ -3,10 +3,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { extractToc, renderMarkdown, type TocItem } from "@/utils/markdown";
 import "@/assets/markdown.css";
 
-const props = defineProps<{
-  content: string;
-  showToc?: boolean;
-}>();
+// showToc 必须显式 default true：Vue 对缺省的 Boolean prop 会 casting 成 false，
+// 不给默认值的话 TOC 永远不渲染。
+const props = withDefaults(
+  defineProps<{
+    content: string;
+    showToc?: boolean;
+  }>(),
+  { showToc: true },
+);
 
 const rootEl = ref<HTMLElement | null>(null);
 const activeId = ref("");

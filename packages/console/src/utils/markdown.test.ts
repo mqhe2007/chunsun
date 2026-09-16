@@ -4,7 +4,8 @@ import { renderMarkdown } from "./markdown";
 describe("renderMarkdown", () => {
   test("renders headings, lists and emphasis", () => {
     const html = renderMarkdown("# 标题\n\n- 甲\n- 乙\n\n**加粗**");
-    expect(html).toContain("<h1>标题</h1>");
+    // heading_anchors core 规则会注入 id（TOC 跳转依赖），断言跟上该行为
+    expect(html).toContain('<h1 id="标题">标题</h1>');
     expect(html).toContain("<li>甲</li>");
     expect(html).toContain("<li>乙</li>");
     expect(html).toContain("<strong>加粗</strong>");

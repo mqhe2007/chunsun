@@ -10,6 +10,7 @@ pub mod notification;
 pub mod project;
 pub mod project_access;
 pub mod project_knowledge;
+pub mod project_knowledge_annotation;
 pub mod project_env_var;
 pub mod project_member;
 pub mod project_stats;

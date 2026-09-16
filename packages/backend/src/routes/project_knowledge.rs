@@ -39,6 +39,7 @@ use crate::repos::project_env_var::count_env_vars_by_project;
 use crate::repos::requirement::count_requirements_by_status;
 use crate::routes::dto::{constitution_dto, knowledge_doc_dto};
 use crate::routes::validate::{optional_number, optional_string, required_string};
+use crate::services::project_knowledge_annotation as ann_service;
 use crate::services::project_access::visible_project_id;
 use crate::services::project_knowledge::list_project_knowledge;
 use crate::state::AppState;
@@ -142,7 +143,20 @@ async fn get_knowledge_doc(
     let Some(doc) = doc else {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     };
-    Ok(ok(knowledge_doc_dto(&doc)))
+    // 单篇深读 → 批注给**全量形态**（含锚点上下文与作者）。Agent 读到这里通常正是
+    // 要按批注改这篇文档，摘要不够用。见 services::project_knowledge_annotation。
+    let mut dto = knowledge_doc_dto(&doc);
+    if let Some(block) = ann_service::load_block_for_doc(
+        &state.pool(),
+        &pid,
+        "document",
+        Some(&doc.id),
+    )
+    .await?
+    {
+        dto["annotations"] = block;
+    }
+    Ok(ok(dto))
 }
 
 async fn put_constitution(
@@ -251,6 +265,15 @@ async fn delete_knowledge(
     if existing.is_none() {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     }
+    // 文档删除是**宿主级联**：批注脱离宿主就没有锚定对象，留下只会变成孤儿数据。
+    // 注意这不同于批注的 resolved/stale 保留策略——那边是「文档还在，批注作为变更
+    // 因果史留存」；这边是文档本身没了，因果史的宿主已不存在。
+    crate::repos::project_knowledge_annotation::delete_annotations_for_document(
+        &state.pool(),
+        &pid,
+        &doc_id,
+    )
+    .await?;
     ctx_repo::delete_knowledge_document(&state.pool(), &doc_id).await?;
     // 回的是入参 docId，不是删掉那行的 id（两者相同，但形状要照抄）
     Ok(ok(json!({ "id": doc_id })))
@@ -372,14 +395,21 @@ async fn get_constitution(
     let policy = ctx_repo::get_project_policy(&state.pool(), &pid).await?;
     let constitution = policy.as_ref().map_or("", |p| p.constitution_md.as_str());
     let updated_at = policy.as_ref().map(|p| p.updated_at);
-    Ok(ok(json!({
+    let mut dto = json!({
         "key": "constitution",
         "title": "项目宪法",
         "content": constitution,
         "system": true,
         "loadStrategy": "eager",
         "updatedAt": updated_at.map(|t| dt_value(&t)),
-    })))
+    });
+    // 单篇形态 → 批注全量（宪法是 Agent 每次启动必读的，批注直接影响执行策略）
+    if let Some(block) =
+        ann_service::load_block_for_doc(&state.pool(), &pid, "constitution", None).await?
+    {
+        dto["annotations"] = block;
+    }
+    Ok(ok(dto))
 }
 
 pub fn router(state: AppState) -> Router<AppState> {

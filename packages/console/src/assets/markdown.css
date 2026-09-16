@@ -95,3 +95,31 @@
   border-top: 1px solid var(--color-base-300);
   margin: 0.8rem 0;
 }
+
+/* ---- 批注内联高亮（需求 u-WPvdvYh4Fw） ----
+   优先 CSS Custom Highlight API（::highlight，不改 DOM）；
+   退化路径用 mark.ann-fallback-*（同视觉）。 */
+
+::highlight(ann-open) {
+  background-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
+}
+
+::highlight(ann-stale) {
+  background-color: color-mix(in oklab, var(--color-error) 22%, transparent);
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-error);
+}
+
+.markdown-body mark.ann-fallback-open {
+  background-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
+  color: inherit;
+}
+
+.markdown-body mark.ann-fallback-stale {
+  background-color: color-mix(in oklab, var(--color-error) 22%, transparent);
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-error);
+}

@@ -36,7 +36,20 @@ async fn get_memory_handler(
     let Some(row) = row else {
         return Err(AppError::not_found("MEMORY_NOT_FOUND"));
     };
-    Ok(ok(project_memory_dto(&row)))
+    // 批注注入（方案 A）：项目记忆是知识库成员（key=memory），Agent 读它时同样要
+    // 看到 open 批注。缺行不注入，保持与旧响应一致。
+    let mut dto = project_memory_dto(&row);
+    if let Some(block) = crate::services::project_knowledge_annotation::load_block_for_doc(
+        &state.pool(),
+        &pid,
+        "memory",
+        None,
+    )
+    .await?
+    {
+        dto["annotations"] = block;
+    }
+    Ok(ok(dto))
 }
 
 async fn put_memory_handler(
