@@ -9,6 +9,7 @@ dist/
 .cursor/
 .codewhale/
 .agents/
+.claude/
 
 # 本地数据库备份
 backups/
