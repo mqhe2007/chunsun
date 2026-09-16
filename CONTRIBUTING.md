@@ -32,6 +32,15 @@ git checkout -b feat/your-feature upstream/main
 
 分支命名建议：`feat/`、`fix/`、`docs/`、`refactor/`、`test/`、`chore/` 前缀 + 简短描述。
 
+### 分支与发布治理
+
+- **`main` 是唯一的集成与生产发布源**。所有功能、缺陷和文档变更都应通过 PR 合入 `main`；生产构建必须以已刷新的 `origin/main@<commit>` 为准，不能以本地过期引用或工作分支作为发布源。
+- **`release` 是兼容同步分支**，仅允许从 `main` 快进同步，不接受功能或缺陷分支直接合入，也不作为部署源。待所有下游使用方完成迁移后可移除该分支。
+- 开始工作前先执行 `git fetch origin --prune`，再基于最新 `origin/main` 建立分支；合并后删除已合并的 feature/fix 远端分支，避免陈旧引用干扰判断。
+- 每次面向用户的功能或修复发布，都应在 `main` 上完成版本号更新，并在发布记录中写明构建的提交 SHA。
+
+生产发布前至少执行：质量检查 → 从 `origin/main@<commit>` 构建 → 备份当前生产二进制与数据库 → 原子替换并重启 → 内网及公网健康检查。
+
 ### 2. 开发与提交
 
 保持提交粒度合理，每个提交聚焦一个逻辑变更。遵循[约定式提交](https://www.conventionalcommits.org/)规范：
