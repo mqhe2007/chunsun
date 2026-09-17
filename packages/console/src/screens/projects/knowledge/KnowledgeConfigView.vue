@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Eye, Pencil, Trash2 } from "@lucide/vue";
+import { ChevronDown, ChevronRight, Eye, Pencil, Trash2 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -12,6 +12,7 @@ import {
   useToast,
 } from "@/ui";
 import { api } from "@/utils/api";
+import { visibleKnowledgeRows } from "@/utils/knowledgeTree";
 
 const CONSTITUTION_KEY = "constitution";
 const CONSTITUTION_TITLE = "项目宪法";
@@ -24,6 +25,8 @@ type ContextItem = {
   content: string;
   system: boolean;
   loadStrategy?: string;
+  parentId?: string | null;
+  depth?: number;
 };
 
 type ContextsPayload = {
@@ -36,6 +39,9 @@ type ContextRow = {
   content: string;
   system: boolean;
   loadStrategy?: string;
+  parentId?: string | null;
+  depth: number;
+  childCount: number;
   preview: string;
 };
 
@@ -46,21 +52,45 @@ const toast = useToast();
 const loading = ref(false);
 const saving = ref(false);
 const contexts = ref<ContextItem[]>([]);
+/** 折叠的主文档 key（默认全部展开） */
+const collapsedKeys = ref<Set<string>>(new Set());
 
 const dialogOpen = ref(false);
 const formTitle = ref("");
 const formLoadStrategy = ref<"eager" | "lazy">("eager");
+const formParentId = ref("");
 
 const projectId = () => (route.params as Record<string, string>).id;
 
 const rows = computed<ContextRow[]>(() =>
-  contexts.value.map(c => ({
-    ...c,
-    preview: c.content.trim()
-      ? `${c.content.trim().slice(0, 80)}${c.content.trim().length > 80 ? "…" : ""}`
+  visibleKnowledgeRows(contexts.value, collapsedKeys.value).map(({ item, depth, childCount }) => ({
+    ...item,
+    depth,
+    childCount,
+    preview: item.content.trim()
+      ? `${item.content.trim().slice(0, 80)}${item.content.trim().length > 80 ? "…" : ""}`
       : "（空）",
   })),
 );
+
+/** 「所属主文档」候选：自定义文档（系统项恒为根，不作为父），带层级缩进。 */
+const parentOptions = computed(() =>
+  visibleKnowledgeRows(contexts.value.filter(c => !c.system)).map(({ item, depth }) => ({
+    key: item.key,
+    label: `${"　".repeat(depth)}${item.title}`,
+  })),
+);
+
+function isCollapsed(key: string) {
+  return collapsedKeys.value.has(key);
+}
+
+function toggleCollapse(key: string) {
+  const next = new Set(collapsedKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedKeys.value = next;
+}
 
 function applyPayload(data: ContextsPayload) {
   const list = data.contexts ?? [];
@@ -97,6 +127,7 @@ async function fetchContexts() {
 function openCreate() {
   formTitle.value = "";
   formLoadStrategy.value = "eager";
+  formParentId.value = "";
   dialogOpen.value = true;
 }
 
@@ -117,9 +148,15 @@ async function saveCreate() {
 
   saving.value = true;
   try {
+    const body: Record<string, unknown> = {
+      title,
+      content: "",
+      loadStrategy: formLoadStrategy.value,
+    };
+    if (formParentId.value) body.parentId = formParentId.value;
     const res = await api.post<{ success: boolean; data: { id: string } }>(
       `/projects/${projectId()}/knowledge/documents`,
-      { title, content: "", loadStrategy: formLoadStrategy.value },
+      body,
     );
     if (!res.data.success) throw new Error("create failed");
     dialogOpen.value = false;
@@ -143,18 +180,25 @@ async function saveCreate() {
 async function confirmDelete(row: ContextRow) {
   if (row.system || row.key === CONSTITUTION_KEY) return;
 
+  const cascade = row.childCount > 0;
   const ok = await confirm({
     title: "删除知识文档",
-    message: `确定删除「${row.title}」？删除后 Agent 将不再加载该文档。`,
+    message: cascade
+      ? `「${row.title}」下有 ${row.childCount} 篇分册，将连同全部分册一起删除，且不可恢复。`
+      : `确定删除「${row.title}」？删除后 Agent 将不再加载该文档。`,
     confirmLabel: "删除",
     danger: true,
   });
   if (!ok) return;
   try {
+    const suffix = cascade ? "?withChildren=true" : "";
     const res = await api.delete<{ success: boolean }>(
-      `/projects/${projectId()}/knowledge/documents/${row.key}`,
+      `/projects/${projectId()}/knowledge/documents/${row.key}${suffix}`,
     );
     if (!res.data.success) throw new Error("delete failed");
+    const next = new Set(collapsedKeys.value);
+    next.delete(row.key);
+    collapsedKeys.value = next;
     toast.success("已删除");
     await fetchContexts();
   } catch {
@@ -188,7 +232,22 @@ onMounted(fetchContexts);
     >
       <AppColumn header="标题">
         <template #default="{ row }">
-          <div class="title-cell">
+          <div
+            class="title-cell"
+            :style="{ paddingLeft: `${(row as ContextRow).depth * 1.25}rem` }"
+          >
+            <button
+              v-if="(row as ContextRow).childCount > 0"
+              type="button"
+              class="btn btn-ghost btn-xs btn-square"
+              :aria-label="isCollapsed((row as ContextRow).key) ? '展开分册' : '收起分册'"
+              :title="isCollapsed((row as ContextRow).key) ? '展开分册' : '收起分册'"
+              @click="toggleCollapse((row as ContextRow).key)"
+            >
+              <ChevronRight v-if="isCollapsed((row as ContextRow).key)" :size="14" aria-hidden="true" />
+              <ChevronDown v-else :size="14" aria-hidden="true" />
+            </button>
+            <span v-else class="tree-spacer" aria-hidden="true" />
             <button
               type="button"
               class="link link-hover text-left"
@@ -198,6 +257,12 @@ onMounted(fetchContexts);
             </button>
             <span v-if="(row as ContextRow).system" class="badge badge-ghost">
               固定
+            </span>
+            <span
+              v-if="(row as ContextRow).childCount > 0"
+              class="badge badge-ghost badge-sm"
+            >
+              {{ (row as ContextRow).childCount }} 分册
             </span>
           </div>
         </template>
@@ -280,6 +345,18 @@ onMounted(fetchContexts);
             <option value="lazy">按需加载（适合参考资料、长文档）</option>
           </select>
         </AppField>
+        <AppField label="所属主文档" html-for="ctx-parent">
+          <select
+            id="ctx-parent"
+            v-model="formParentId"
+            class="select select-bordered w-full"
+          >
+            <option value="">无（根文档）</option>
+            <option v-for="opt in parentOptions" :key="opt.key" :value="opt.key">
+              {{ opt.label }}
+            </option>
+          </select>
+        </AppField>
       </div>
       <template #footer>
         <button type="button" class="btn btn-ghost" @click="dialogOpen = false">取消</button>
@@ -298,6 +375,12 @@ onMounted(fetchContexts);
   align-items: center;
   gap: 0.45rem;
   flex-wrap: wrap;
+}
+
+.tree-spacer {
+  display: inline-block;
+  width: 1.5rem;
+  flex: none;
 }
 
 .preview-cell {

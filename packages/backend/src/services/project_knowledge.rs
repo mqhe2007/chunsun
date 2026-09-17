@@ -8,7 +8,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::api::AppError;
-use crate::repos::project_knowledge::{get_project_policy, list_knowledge_documents};
+use crate::repos::project_knowledge::{get_project_policy, list_knowledge_document_nodes};
 use crate::repos::project_memory::get_project_memory;
 use crate::routes::dto::knowledge_item_dto;
 use crate::services::project_knowledge_annotation as ann_service;
@@ -48,18 +48,21 @@ fn attach_annotations(
 ///
 /// `strategy` 为 None 时返回全部（含宪法、项目记忆）；为 Some("eager") 时只返回 eager 文档
 /// （宪法与项目记忆恒为 eager，始终包含）；为 Some("lazy") 时只返回 lazy 文档（不含宪法与项目记忆）。
+///
+/// 层级：先全量组树（前序，父后紧跟子树）再做策略过滤——过滤只删条目，
+/// `parentId` / `depth` 保持绝对层级，`--strategy` 视图也能看出主文档/分册。
 pub async fn list_project_knowledge(
     pool: &PgPool,
     project_id: &str,
     strategy: Option<&str>,
 ) -> Result<Vec<Value>, AppError> {
     let policy = get_project_policy(pool, project_id).await?;
-    let docs = list_knowledge_documents(pool, project_id, strategy).await?;
+    let nodes = list_knowledge_document_nodes(pool, project_id).await?;
     let memory = get_project_memory(pool, project_id).await?;
 
     let constitution = policy.as_ref().map_or("", |p| p.constitution_md.as_str());
     let memory_snapshot = memory.as_ref().and_then(|m| m.snapshot.as_deref()).unwrap_or("");
-    let mut items = Vec::with_capacity(docs.len() + 2);
+    let mut items = Vec::with_capacity(nodes.len() + 2);
 
     // 批注注入（方案 A，需求 u-WPvdvYh4Fw 第 3 步）：这里返回的是 **摘要形态**，
     // 只含 open 批注。Agent 读全量知识时不该吃掉全部批注正文——单篇深读
@@ -70,7 +73,7 @@ pub async fn list_project_knowledge(
     // 宪法恒为 eager；当 strategy=lazy 时不包含宪法
     if strategy != Some("lazy") {
         items.push(attach_annotations(
-            knowledge_item_dto("constitution", "项目宪法", constitution, true, "eager"),
+            knowledge_item_dto("constitution", "项目宪法", constitution, true, "eager", None, 0),
             &ann_map,
             "constitution",
             None,
@@ -79,18 +82,31 @@ pub async fn list_project_knowledge(
     // 项目记忆恒为 eager；当 strategy=lazy 时不包含（与宪法同规则）
     if strategy != Some("lazy") {
         items.push(attach_annotations(
-            knowledge_item_dto("memory", "项目记忆", memory_snapshot, true, "eager"),
+            knowledge_item_dto("memory", "项目记忆", memory_snapshot, true, "eager", None, 0),
             &ann_map,
             "memory",
             None,
         ));
     }
-    for doc in &docs {
+    for node in &nodes {
+        if let Some(s) = strategy {
+            if node.doc.load_strategy != s {
+                continue;
+            }
+        }
         items.push(attach_annotations(
-            knowledge_item_dto(&doc.id, &doc.title, &doc.content, false, &doc.load_strategy),
+            knowledge_item_dto(
+                &node.doc.id,
+                &node.doc.title,
+                &node.doc.content,
+                false,
+                &node.doc.load_strategy,
+                node.doc.parent_id.as_deref(),
+                node.depth,
+            ),
             &ann_map,
             "document",
-            Some(&doc.id),
+            Some(&node.doc.id),
         ));
     }
     Ok(items)

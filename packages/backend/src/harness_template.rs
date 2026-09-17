@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 
 /// 当前模板版本号。技能 / 协议有结构性改动时必须递增。
 /// 与 `templates/VERSION` 及 CLI 侧 `fixture_version` 测试保持一致。
-pub const TEMPLATE_VERSION: &str = "2026-09-09-memory-writing-rules";
+pub const TEMPLATE_VERSION: &str = "2026-09-17-knowledge-doc-relations";
 
 const SKILL: &str = include_str!("../templates/skill.md");
 const LOOP_RULES: &str = include_str!("../templates/loop-rules.md");
@@ -85,6 +85,8 @@ mod tests {
         assert!(SKILL.contains("references/loop-rules.md"));
         assert!(SKILL.contains("自主交付"));
         assert!(SKILL.contains("knowledge index"));
+        // 知识库文档关联关系（主文档 ↔ 分册）进入 Agent 契约
+        assert!(SKILL.contains("分册"));
         assert!(!SKILL.contains("斜线命令（仅 2 个）"), "斜线命令章节应已移除");
         assert!(!SKILL.contains("AGENTS.md）"), "不应再引用 AGENTS.md 桥接");
         assert!(LOOP_RULES.contains("技能激活期间恒生效"));
