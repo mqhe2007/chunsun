@@ -66,6 +66,9 @@ pub struct CreateKnowledgeBody {
     pub content: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub load_strategy: Option<Option<String>>,
+    /// 所属主文档 id；不传 / null = 建为根文档
+    #[serde(default, deserialize_with = "double_option")]
+    pub parent_id: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,12 +82,24 @@ pub struct UpdateKnowledgeBody {
     pub sort_order: Option<Option<f64>>,
     #[serde(default, deserialize_with = "double_option")]
     pub load_strategy: Option<Option<String>>,
+    /// 双层语义：不传 = 不改；null / 空串 = 解除关联（回到根）
+    #[serde(default, deserialize_with = "double_option")]
+    pub parent_id: Option<Option<String>>,
 }
 
 /// `GET /knowledge/documents?strategy=eager|lazy` 的 query 参数
 #[derive(Debug, Deserialize)]
 pub struct ListKnowledgeQuery {
     pub strategy: Option<String>,
+}
+
+/// `DELETE /knowledge/documents/:docId?withChildren=true` 的 query 参数。
+/// 默认拒绝删有子文档的文档，显式 withChildren 才递归级联。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteKnowledgeQuery {
+    #[serde(default)]
+    pub with_children: bool,
 }
 
 fn is_admin(session: &crate::auth::AuthSession) -> bool {
@@ -104,6 +119,32 @@ pub async fn visible(
         is_admin(session),
     )
     .await
+}
+
+/// 校验父文档（主文档/分册关联）：必须同项目存在，且绝不能是自身或自身后代（防环）。
+///
+/// `self_id` 为 None（create，还没有自身）时只查存在性；update 时额外做环校验。
+async fn validate_parent_doc(
+    state: &AppState,
+    project_id: &str,
+    self_id: Option<&str>,
+    parent_id: &str,
+) -> Result<(), AppError> {
+    if self_id == Some(parent_id) {
+        return Err(AppError::bad_request("PARENT_CYCLE"));
+    }
+    let parent =
+        ctx_repo::find_knowledge_document(&state.pool(), project_id, parent_id).await?;
+    if parent.is_none() {
+        // 跨项目父、不存在的 id、宪法/记忆等系统 key 都归这一类
+        return Err(AppError::bad_request("INVALID_PARENT_DOC"));
+    }
+    if let Some(id) = self_id {
+        if ctx_repo::is_in_subtree(&state.pool(), project_id, id, parent_id).await? {
+            return Err(AppError::bad_request("PARENT_CYCLE"));
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- 第 11 域
@@ -143,9 +184,40 @@ async fn get_knowledge_doc(
     let Some(doc) = doc else {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     };
+
+    // 关联关系（主文档 ↔ 分册）：面包屑（根→父）与直接子文档清单。
+    // 复用全量前序树一次查询，避免逐级 find 的 N+1。
+    use std::collections::HashMap;
+    let nodes = ctx_repo::list_knowledge_document_nodes(&state.pool(), &pid).await?;
+    let by_id: HashMap<&str, &ctx_repo::KnowledgeDocNode> =
+        nodes.iter().map(|n| (n.doc.id.as_str(), n)).collect();
+    let mut breadcrumb: Vec<Value> = Vec::new();
+    let mut cursor = doc.parent_id.clone();
+    // guard 防手改出的环把面包屑撑爆（正常树深度远小于 64）
+    for _ in 0..64 {
+        let Some(parent) = cursor.as_deref().and_then(|pid| by_id.get(pid)) else {
+            break;
+        };
+        breadcrumb.insert(0, json!({ "id": parent.doc.id, "title": parent.doc.title }));
+        cursor = parent.doc.parent_id.clone();
+    }
+    let children: Vec<Value> = nodes
+        .iter()
+        .filter(|n| n.doc.parent_id.as_deref() == Some(doc.id.as_str()))
+        .map(|n| {
+            json!({
+                "id": n.doc.id,
+                "title": n.doc.title,
+                "loadStrategy": n.doc.load_strategy,
+            })
+        })
+        .collect();
+
     // 单篇深读 → 批注给**全量形态**（含锚点上下文与作者）。Agent 读到这里通常正是
     // 要按批注改这篇文档，摘要不够用。见 services::project_knowledge_annotation。
     let mut dto = knowledge_doc_dto(&doc);
+    dto["breadcrumb"] = Value::Array(breadcrumb);
+    dto["children"] = Value::Array(children);
     if let Some(block) = ann_service::load_block_for_doc(
         &state.pool(),
         &pid,
@@ -201,8 +273,21 @@ async fn create_knowledge(
         return Err(AppError::bad_request("TITLE_REQUIRED"));
     }
 
-    let doc =
-        ctx_repo::create_knowledge_document(&state.pool(), &pid, title, content.unwrap_or(""), load_strategy).await?;
+    // 空串等价于不挂父（CLI 友好）；显式挂父时先校验
+    let parent_id = body.parent_id.flatten().filter(|s| !s.is_empty());
+    if let Some(p) = parent_id.as_deref() {
+        validate_parent_doc(&state, &pid, None, p).await?;
+    }
+
+    let doc = ctx_repo::create_knowledge_document(
+        &state.pool(),
+        &pid,
+        title,
+        content.unwrap_or(""),
+        load_strategy,
+        parent_id.as_deref(),
+    )
+    .await?;
     Ok(ok(knowledge_doc_dto(&doc)))
 }
 
@@ -229,6 +314,16 @@ async fn update_knowledge(
         }
     }
 
+    // 父关联：不传 = 不改；null / 空串 = 解除关联（回到根）
+    let parent_update: Option<Option<String>> = match &body.parent_id {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(s)) => Some(if s.is_empty() { None } else { Some(s.clone()) }),
+    };
+    if let Some(Some(p)) = &parent_update {
+        validate_parent_doc(&state, &pid, Some(&doc_id), p).await?;
+    }
+
     let sort_order = match sort_order {
         // 越界的 sortOrder 在旧后端是 Prisma 未捕获异常 → 500
         Some(n) => Some(prisma_int(n).map_err(|_| {
@@ -245,9 +340,16 @@ async fn update_knowledge(
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     };
 
-    let doc =
-        ctx_repo::update_knowledge_document(&state.pool(), &existing, title, content, sort_order, load_strategy)
-            .await?;
+    let doc = ctx_repo::update_knowledge_document(
+        &state.pool(),
+        &existing,
+        title,
+        content,
+        sort_order,
+        load_strategy,
+        parent_update.as_ref().map(|o| o.as_deref()),
+    )
+    .await?;
     Ok(ok(knowledge_doc_dto(&doc)))
 }
 
@@ -255,6 +357,7 @@ async fn delete_knowledge(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path((project_id, doc_id)): Path<(String, String)>,
+    Query(query): Query<DeleteKnowledgeQuery>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
     if doc_id == "constitution" {
@@ -265,16 +368,34 @@ async fn delete_knowledge(
     if existing.is_none() {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
     }
+
+    // 默认拒绝删有子文档的文档（避免静默把分册提升为根）；显式 withChildren=true 才级联。
+    let child_count = ctx_repo::count_children(&state.pool(), &pid, &doc_id).await?;
+    if child_count > 0 && !query.with_children {
+        return Err(AppError::bad_request("DOC_HAS_CHILDREN"));
+    }
+
+    let mut doomed = vec![doc_id.clone()];
+    if child_count > 0 {
+        doomed.extend(ctx_repo::list_descendant_ids(&state.pool(), &pid, &doc_id).await?);
+    }
+
     // 文档删除是**宿主级联**：批注脱离宿主就没有锚定对象，留下只会变成孤儿数据。
     // 注意这不同于批注的 resolved/stale 保留策略——那边是「文档还在，批注作为变更
     // 因果史留存」；这边是文档本身没了，因果史的宿主已不存在。
-    crate::repos::project_knowledge_annotation::delete_annotations_for_document(
-        &state.pool(),
-        &pid,
-        &doc_id,
-    )
-    .await?;
-    ctx_repo::delete_knowledge_document(&state.pool(), &doc_id).await?;
+    // 级联删除时子树每一篇的批注都按同一规则清理。
+    for id in &doomed {
+        crate::repos::project_knowledge_annotation::delete_annotations_for_document(
+            &state.pool(),
+            &pid,
+            id,
+        )
+        .await?;
+    }
+    // 先删子树、后删根（FK 是 SET NULL，顺序不敏感，显式从深到浅更直观）
+    for id in doomed.iter().rev() {
+        ctx_repo::delete_knowledge_document(&state.pool(), id).await?;
+    }
     // 回的是入参 docId，不是删掉那行的 id（两者相同，但形状要照抄）
     Ok(ok(json!({ "id": doc_id })))
 }
@@ -310,22 +431,25 @@ fn by_status_map(groups: &[(String, i64)]) -> Value {
 /// `GET /knowledge/index`：知识目录（所有文档元信息，不含正文）。
 ///
 /// 固定 eager 加载，Agent 启动时拉取，用于感知有哪些 lazy 文档可按需拉取。
-/// 返回字段：key / title / system / loadStrategy，**不含 content**。
+/// 返回字段：key / title / system / loadStrategy / parentId / depth，**不含 content**。
+/// 顺序为**前序**（父后紧跟其子树）——Agent / CLI 按序渲染即可看到主文档与分册的从属关系。
 async fn get_knowledge_index(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
-    let docs = ctx_repo::list_knowledge_documents(&state.pool(), &pid, None).await?;
+    let nodes = ctx_repo::list_knowledge_document_nodes(&state.pool(), &pid).await?;
 
-    let mut items = Vec::with_capacity(docs.len() + 2);
-    // 宪法恒为 eager，固定包含
+    let mut items = Vec::with_capacity(nodes.len() + 2);
+    // 宪法恒为 eager，固定包含（系统项恒为根）
     items.push(json!({
         "key": "constitution",
         "title": "项目宪法",
         "system": true,
         "loadStrategy": "eager",
+        "parentId": Value::Null,
+        "depth": 0,
     }));
     // 项目记忆恒为 eager，固定包含（属于项目知识库之一，仅可编辑不可删除）
     items.push(json!({
@@ -333,13 +457,17 @@ async fn get_knowledge_index(
         "title": "项目记忆",
         "system": true,
         "loadStrategy": "eager",
+        "parentId": Value::Null,
+        "depth": 0,
     }));
-    for doc in &docs {
+    for node in &nodes {
         items.push(json!({
-            "key": doc.id,
-            "title": doc.title,
+            "key": node.doc.id,
+            "title": node.doc.title,
             "system": false,
-            "loadStrategy": doc.load_strategy,
+            "loadStrategy": node.doc.load_strategy,
+            "parentId": node.doc.parent_id,
+            "depth": node.depth,
         }));
     }
     Ok(ok(json!({ "index": items })))

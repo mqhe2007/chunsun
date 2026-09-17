@@ -181,6 +181,7 @@ pub fn knowledge_doc_dto(d: &KnowledgeDocRow) -> Value {
         "content": d.content,
         "sortOrder": d.sort_order,
         "loadStrategy": d.load_strategy,
+        "parentId": d.parent_id,
         "updatedAt": dt_value(&d.updated_at),
     })
 }
@@ -198,16 +199,27 @@ pub fn constitution_dto(constitution_md: &str, updated_at: &chrono::DateTime<chr
 }
 
 /// `ProjectContextItem`：宪法与自定义文档在列表里被抹平成同一形状
-/// （只有 `key/title/content/system/loadStrategy` 五个字段，**没有** `sortOrder`/`updatedAt`）。
+/// （`key/title/content/system/loadStrategy` + 层级 `parentId/depth`，**没有** `sortOrder`/`updatedAt`）。
 ///
 /// 宪法的 loadStrategy 恒为 'eager'（系统固定项，启动时必须加载）。
-pub fn knowledge_item_dto(key: &str, title: &str, content: &str, system: bool, load_strategy: &str) -> Value {
+/// 系统项为根：`parent_id = None`、`depth = 0`。
+pub fn knowledge_item_dto(
+    key: &str,
+    title: &str,
+    content: &str,
+    system: bool,
+    load_strategy: &str,
+    parent_id: Option<&str>,
+    depth: usize,
+) -> Value {
     json!({
         "key": key,
         "title": title,
         "content": content,
         "system": system,
         "loadStrategy": load_strategy,
+        "parentId": parent_id,
+        "depth": depth,
     })
 }
 
