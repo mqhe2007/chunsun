@@ -16,6 +16,7 @@ import {
 } from "@/utils/selectionToolbar";
 import { useAuthStore } from "@/stores/auth";
 import { api } from "@/utils/api";
+import { collectDescendantKeys, visibleKnowledgeRows } from "@/utils/knowledgeTree";
 import { renderMarkdown } from "@/utils/markdown";
 
 const CONSTITUTION_KEY = "constitution";
@@ -30,6 +31,23 @@ type DocPayload = {
   system: boolean;
   loadStrategy?: string;
   updatedAt?: string;
+};
+
+type RelationRef = { id: string; title: string };
+type ChildRef = { id: string; title: string; loadStrategy?: string };
+
+type RelationPayload = {
+  parentId?: string | null;
+  breadcrumb?: RelationRef[];
+  children?: ChildRef[];
+};
+
+type PickerItem = {
+  key: string;
+  title: string;
+  system: boolean;
+  parentId?: string | null;
+  depth?: number;
 };
 
 const route = useRoute();
@@ -47,6 +65,13 @@ const system = ref(false);
 const updatedAt = ref<string | null>(null);
 const notFound = ref(false);
 
+// 主文档/分册关联（需求 AOzsC2VvzMHL）
+const parentId = ref<string | null>(null);
+const savedParentId = ref<string | null>(null);
+const breadcrumb = ref<RelationRef[]>([]);
+const children = ref<ChildRef[]>([]);
+const parentOptions = ref<{ key: string; label: string }[]>([]);
+
 const projectId = computed(() => (route.params as Record<string, string>).id ?? "");
 const docKey = computed(() => (route.params as Record<string, string>).docKey ?? "");
 const isEdit = computed(() => route.query.mode === "edit");
@@ -54,7 +79,9 @@ const isConstitution = computed(() => docKey.value === CONSTITUTION_KEY);
 const isMemory = computed(() => docKey.value === MEMORY_KEY);
 const isSystem = computed(() => isConstitution.value || isMemory.value || system.value);
 const shareable = computed(() => !isSystem.value);
-const dirty = computed(() => content.value !== savedContent.value);
+const dirty = computed(
+  () => content.value !== savedContent.value || parentId.value !== savedParentId.value,
+);
 const previewHtml = computed(() => renderMarkdown(content.value));
 
 // ---- 批注（需求 u-WPvdvYh4Fw：方案甲第三栏 + 内联高亮 + 选项 B 结案）----
@@ -149,7 +176,7 @@ async function loadDoc() {
           content: string;
           loadStrategy?: string;
           updatedAt?: string;
-        };
+        } & RelationPayload;
       }>(`/projects/${projectId.value}/knowledge/documents/${docKey.value}`);
       if (!data.success) throw new Error("fail");
       applyDoc({
@@ -160,6 +187,8 @@ async function loadDoc() {
         loadStrategy: (data.data.loadStrategy as "eager" | "lazy") || "eager",
         updatedAt: data.data.updatedAt,
       });
+      applyRelation(data.data);
+      void loadParentOptions();
     }
   } catch {
     notFound.value = true;
@@ -176,6 +205,40 @@ function applyDoc(doc: DocPayload) {
   system.value = doc.system;
   loadStrategy.value = (doc.loadStrategy as "eager" | "lazy") || "eager";
   updatedAt.value = doc.updatedAt ?? null;
+}
+
+/** 关联关系（主文档/分册）落到本地状态；系统项恒无关联。 */
+function applyRelation(payload: RelationPayload) {
+  parentId.value = payload.parentId ?? null;
+  savedParentId.value = parentId.value;
+  breadcrumb.value = payload.breadcrumb ?? [];
+  children.value = payload.children ?? [];
+}
+
+/** 所属主文档候选：排除自身与自身全部后代（防成环），带层级缩进。 */
+async function loadParentOptions() {
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data: { contexts: PickerItem[] };
+    }>(`/projects/${projectId.value}/knowledge/documents`);
+    if (!data.success) return;
+    const items = (data.data.contexts ?? []).filter(c => !c.system);
+    const excluded = collectDescendantKeys(items, docKey.value);
+    parentOptions.value = visibleKnowledgeRows(items)
+      .filter(({ item }) => item.key !== docKey.value && !excluded.has(item.key))
+      .map(({ item, depth }) => ({
+        key: item.key,
+        label: `${"　".repeat(depth)}${item.title}`,
+      }));
+  } catch {
+    // 候选加载失败不阻塞阅读/编辑，下拉退化为仅「无」
+    parentOptions.value = [];
+  }
+}
+
+function openRelated(id: string) {
+  router.push({ path: `/projects/${projectId.value}/knowledge/docs/${id}` });
 }
 
 async function save() {
@@ -204,9 +267,17 @@ async function save() {
           title: title.value.trim(),
           content: content.value,
           loadStrategy: loadStrategy.value,
+          parentId: parentId.value,
         },
       );
       if (!res.data.success) throw new Error("fail");
+      // 关联可能变化：回读面包屑/子文档并同步已保存的父
+      const { data } = await api.get<{
+        success: boolean;
+        data: RelationPayload;
+      }>(`/projects/${projectId.value}/knowledge/documents/${docKey.value}`);
+      if (data.success) applyRelation(data.data);
+      void loadParentOptions();
     }
     savedContent.value = content.value;
     toast.success("已保存");
@@ -420,6 +491,11 @@ watch([projectId, docKey], () => {
   annComposeOpen.value = false;
   annCompose.value = null;
   annDrawerOpen.value = false;
+  parentId.value = null;
+  savedParentId.value = null;
+  breadcrumb.value = [];
+  children.value = [];
+  parentOptions.value = [];
   void loadDoc();
   void loadAnnotations();
 });
@@ -533,6 +609,14 @@ onBeforeUnmount(() => {
             <option value="lazy">按需加载</option>
           </select>
         </AppField>
+        <AppField label="所属主文档" html-for="doc-parent">
+          <select id="doc-parent" v-model="parentId" class="select select-bordered w-full">
+            <option :value="null">无（根文档）</option>
+            <option v-for="opt in parentOptions" :key="opt.key" :value="opt.key">
+              {{ opt.label }}
+            </option>
+          </select>
+        </AppField>
       </div>
       <p v-else class="text-sm text-base-content/60">
         {{ isConstitution ? "项目宪法为系统固定项，标题不可更改、不可删除、不可分享。" : "项目记忆为系统固定项，标题不可更改、不可删除、不可分享。" }}
@@ -554,7 +638,36 @@ onBeforeUnmount(() => {
           @click="onReadClick"
           @pointerup="onReadPointerup"
         >
-          <MarkdownReader :content="content" class="min-w-0 flex-1" />
+          <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+            <!-- 关联关系（主文档/分册）：阅读态直观呈现归属与分册清单 -->
+            <div
+              v-if="!isSystem && (breadcrumb.length || children.length)"
+              class="relation-strip rounded-box border border-base-300 bg-base-100 px-3 py-2 text-sm shadow-sm"
+            >
+              <div v-if="breadcrumb.length" class="relation-line">
+                <span class="relation-label">所属主文档：</span>
+                <template v-for="(b, i) in breadcrumb" :key="b.id">
+                  <span v-if="i > 0" class="relation-sep">/</span>
+                  <button type="button" class="link link-hover" @click="openRelated(b.id)">
+                    {{ b.title }}
+                  </button>
+                </template>
+              </div>
+              <div v-if="children.length" class="relation-line">
+                <span class="relation-label">分册（{{ children.length }}）：</span>
+                <button
+                  v-for="c in children"
+                  :key="c.id"
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  @click="openRelated(c.id)"
+                >
+                  {{ c.title }}
+                </button>
+              </div>
+            </div>
+            <MarkdownReader :content="content" class="min-w-0 flex-1" />
+          </div>
           <aside
             v-if="annPanelOpen"
             class="hidden w-64 shrink-0 lg:sticky lg:top-4 lg:block xl:w-72"
@@ -662,5 +775,27 @@ onBeforeUnmount(() => {
 <style scoped>
 .workspace-edit {
   min-height: calc(100vh - 12rem);
+}
+
+.relation-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.relation-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.relation-label {
+  font-size: 0.8rem;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+
+.relation-sep {
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
 }
 </style>
