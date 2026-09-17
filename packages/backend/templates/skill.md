@@ -239,9 +239,18 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 
 ### 知识目录（固定 eager）
 
-启动时除了拉取 eager 文档正文，还会拉取**知识目录**（`chunsun knowledge index`）：包含所有文档（含 lazy）的元信息 `key / title / system / loadStrategy`，**不含正文**。
+启动时除了拉取 eager 文档正文，还会拉取**知识目录**（`chunsun knowledge index`）：包含所有文档（含 lazy）的元信息 `key / title / system / loadStrategy / parentId / depth`，**不含正文**。输出为**前序树形**（父后紧跟其子树，`└` 表示分册归属），有子文档的条目会标注「主文档（N 分册）」。
 
 Agent 通过知识目录感知有哪些 lazy 文档可用，在循环中遇到相关场景时主动单条拉取正文，不要在启动时预加载所有 lazy 文档。
+
+### 主文档与分册（文档关联关系）
+
+知识文档可组成**主文档 → 分册**的层级（`parentId` 关联，`depth=0` 为根）：
+
+- 主文档通常是总纲（如「应用架构设计」），分册是它下挂的详细设计；主文档的 `key` 就是分册的 `parentId`。
+- 需要某主题时，**先读主文档再按需拉分册**——主文档往往给出全局约束与分册索引，只拉分册容易只见树木。
+- `chunsun knowledge doc <docId>` 会输出面包屑（所属主文档链）与子文档清单，用来看清一篇文档在树中的位置；`--json` 给机器读。
+- `chunsun knowledge create/update --parent <主文档ID>` 可建立/变更关联（update 传空串解除关联）；层级维护是人工动作，交付循环里只读不改。
 
 ## 验收定义（passing 的标准）
 

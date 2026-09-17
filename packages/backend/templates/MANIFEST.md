@@ -48,6 +48,13 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 >
 > 2026-09-09-memory-writing-rules：skill.md「项目记忆」节新增「撰写规则」——不强制章节模板，但明确写什么（跨需求复用且代码读不出来的硬约束/决策理由/根因+解法）、不写什么（单需求过程、grep 可知事实、长篇参考、流水账）、怎么写（一条一行、精确可执行、按主题聚类）、过时即删（旧结论删除只留一句极短演进记录，不做只追加日志）。
 >
+> 2026-09-17-knowledge-doc-relations：知识库文档关联关系（主文档 ↔ 分册，需求 AOzsC2VvzMHL）——
+> ①`project_knowledge_document` 新增可空自引用 `parent_id`（旧数据自动为根，零迁移）；跨项目父/自引用/成环拒绝；
+> ②`/knowledge/index` 与文档列表改**前序**输出（父后紧跟子树）并新增 `parentId`/`depth`；单篇详情新增 `breadcrumb`/`children`；删除父文档默认 400 `DOC_HAS_CHILDREN`，`withChildren=true` 显式级联（含批注清理）；
+> ③CLI：`knowledge index` 树形缩进（主文档标注「N 分册」）、`knowledge doc` 输出面包屑+子文档+正文、`create/update --parent`、补齐 `knowledge doc/index --json`；
+> ④console 知识库列表按层级缩进/折叠/「N 分册」徽标，阅读页新增面包屑与分册清单，新建/编辑可选「所属主文档」；
+> ⑤skill.md 新增「主文档与分册」契约（先读主文档再按需拉分册），commands.md 同步命令。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选
