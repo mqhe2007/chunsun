@@ -190,8 +190,6 @@ struct KnowledgeItem {
     id: Option<String>,
     #[serde(default, rename = "loadStrategy")]
     load_strategy: Option<String>,
-    #[serde(default, rename = "parentId")]
-    parent_id: Option<String>,
     #[serde(default)]
     depth: usize,
 }
