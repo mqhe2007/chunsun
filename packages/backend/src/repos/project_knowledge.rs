@@ -34,12 +34,12 @@ pub struct KnowledgeDocRow {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 前序展开后的文档节点：`depth` 从根（0）算起，`child_count` 是**直接**子文档数。
+/// 前序展开后的文档节点：`depth` 从根（0）算起。
+/// 直接子文档数由消费方按 `parentId` 统计（CLI/Console 都拿得到全量列表），不在这里冗余。
 #[derive(Debug, Clone)]
 pub struct KnowledgeDocNode {
     pub doc: KnowledgeDocRow,
     pub depth: usize,
-    pub child_count: usize,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -144,7 +144,6 @@ fn build_forest(rows: Vec<KnowledgeDocRow>) -> Vec<KnowledgeDocNode> {
         out.push(KnowledgeDocNode {
             doc: rows[i].clone(),
             depth,
-            child_count: kids.len(),
         });
         for &k in kids {
             walk(k, depth + 1, rows, children, visited, out);
@@ -392,10 +391,10 @@ mod tests {
         }
     }
 
-    fn layout(nodes: &[KnowledgeDocNode]) -> Vec<(String, usize, usize)> {
+    fn layout(nodes: &[KnowledgeDocNode]) -> Vec<(String, usize)> {
         nodes
             .iter()
-            .map(|n| (n.doc.id.clone(), n.depth, n.child_count))
+            .map(|n| (n.doc.id.clone(), n.depth))
             .collect()
     }
 
@@ -403,8 +402,8 @@ mod tests {
     fn forest_keeps_flat_docs_at_root() {
         let out = build_forest(vec![row("a", None), row("b", None)]);
         assert_eq!(layout(&out), vec![
-            ("a".into(), 0, 0),
-            ("b".into(), 0, 0),
+            ("a".into(), 0),
+            ("b".into(), 0),
         ]);
     }
 
@@ -418,10 +417,10 @@ mod tests {
             row("g", Some("c1")),
         ]);
         assert_eq!(layout(&out), vec![
-            ("p".into(), 0, 2),
-            ("c1".into(), 1, 1),
-            ("g".into(), 2, 0),
-            ("c2".into(), 1, 0),
+            ("p".into(), 0),
+            ("c1".into(), 1),
+            ("g".into(), 2),
+            ("c2".into(), 1),
         ]);
     }
 
@@ -429,8 +428,8 @@ mod tests {
     fn forest_treats_orphans_as_roots_without_losing_them() {
         let out = build_forest(vec![row("root", None), row("orphan", Some("missing"))]);
         assert_eq!(layout(&out), vec![
-            ("root".into(), 0, 0),
-            ("orphan".into(), 0, 0),
+            ("root".into(), 0),
+            ("orphan".into(), 0),
         ]);
     }
 
@@ -447,6 +446,6 @@ mod tests {
     #[test]
     fn forest_breaks_self_parent_cycle() {
         let out = build_forest(vec![row("self", Some("self"))]);
-        assert_eq!(layout(&out), vec![("self".into(), 0, 0)]);
+        assert_eq!(layout(&out), vec![("self".into(), 0)]);
     }
 }
