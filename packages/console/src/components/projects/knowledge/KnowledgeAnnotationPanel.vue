@@ -13,7 +13,7 @@ import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
  * 实例共享同一数据源）。
  *
  * 新建批注走「正文选区工具条 → 模态框」（宿主渲染），面板只列已存在的批注，
- * 列表按紧凑卡片排版：正文一行、元信息与图标操作同一行。
+ * 列表按紧凑卡片排版：第一行是批注正文标题，第二行是状态、时间与操作。
  */
 
 const props = defineProps<{
@@ -130,13 +130,12 @@ function openDetails(ann: KnowledgeAnnotation) {
 
 const statusLabel: Record<KnowledgeAnnotation["status"], string> = {
   open: "待处理",
-  stale: "原文已变更",
+  stale: "待处理",
   resolved: "已处理",
 };
 
 function statusClass(status: KnowledgeAnnotation["status"]): string {
   if (status === "resolved") return "badge-success";
-  if (status === "stale") return "badge-warning";
   return "badge-primary";
 }
 
@@ -159,7 +158,7 @@ function locateDetails() {
     </div>
 
     <template v-else>
-      <!-- 未处理：open + stale（stale 带「原文已变更」标记，永不静默删除） -->
+      <!-- 未处理：open + stale；stale 的锚点失效说明只在详情中展示。 -->
       <div class="flex flex-col gap-1.5">
         <h4 class="text-sm font-medium">
           未处理
@@ -174,11 +173,11 @@ function locateDetails() {
           :ref="el => setItemRef(ann.id, el)"
           class="card bg-base-200/40 scroll-mt-4"
         >
-          <div class="card-body gap-1 p-2.5">
-            <div class="flex min-w-0 items-center gap-1.5">
+          <div class="card-body gap-1.5 p-2.5">
+            <div class="min-w-0">
               <button
                 type="button"
-                class="min-w-0 flex-1 truncate text-left text-[13px] leading-snug disabled:cursor-default disabled:opacity-100"
+                class="block w-full truncate text-left text-[13px] font-medium leading-snug disabled:cursor-default disabled:opacity-100"
                 :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
                 :disabled="!anchorQuote(ann)"
                 :title="ann.body"
@@ -186,14 +185,16 @@ function locateDetails() {
               >
                 {{ ann.body }}
               </button>
+            </div>
+            <div class="flex min-w-0 items-center gap-1.5">
               <span class="badge badge-xs shrink-0" :class="statusClass(ann.status)">
                 {{ statusLabel[ann.status] }}
               </span>
               <span
-                class="max-w-24 shrink-0 truncate text-[11px] text-base-content/50"
-                :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
+                class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                :title="timeLabel(ann.createdAt)"
               >
-                {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
+                {{ shortTime(ann.createdAt) }}
               </span>
               <div class="flex shrink-0 items-center gap-0.5">
                 <button
@@ -314,11 +315,11 @@ function locateDetails() {
             :ref="el => setItemRef(ann.id, el)"
             class="card bg-base-100"
           >
-            <div class="card-body gap-1 p-2.5">
-              <div class="flex min-w-0 items-center gap-1.5">
+            <div class="card-body gap-1.5 p-2.5">
+              <div class="min-w-0">
                 <button
                   type="button"
-                  class="min-w-0 flex-1 truncate text-left text-[13px] leading-snug text-base-content/70 disabled:cursor-default disabled:opacity-100"
+                  class="block w-full truncate text-left text-[13px] font-medium leading-snug text-base-content/70 disabled:cursor-default disabled:opacity-100"
                   :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
                   :disabled="!anchorQuote(ann)"
                   :title="ann.body"
@@ -326,14 +327,16 @@ function locateDetails() {
                 >
                   {{ ann.body }}
                 </button>
+              </div>
+              <div class="flex min-w-0 items-center gap-1.5">
                 <span class="badge badge-xs shrink-0" :class="statusClass(ann.status)">
                   {{ statusLabel[ann.status] }}
                 </span>
                 <span
-                  class="max-w-24 shrink-0 truncate text-[11px] text-base-content/50"
-                  :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
+                  class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                  :title="timeLabel(ann.createdAt)"
                 >
-                  {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
+                  {{ shortTime(ann.createdAt) }}
                 </span>
                 <button
                   type="button"
@@ -378,8 +381,15 @@ function locateDetails() {
           {{ outcomeLabel[detailAnnotation.outcome] ?? "已处理" }}
         </span>
         <span class="text-xs text-base-content/50">
-          {{ detailAnnotation.createdBy }} · {{ timeLabel(detailAnnotation.createdAt) }}
+          创建于 {{ timeLabel(detailAnnotation.createdAt) }}
         </span>
+      </div>
+
+      <div
+        v-if="detailAnnotation.status === 'stale'"
+        class="alert alert-warning py-2 text-xs"
+      >
+        文档内容更新后，系统已无法定位这条批注引用的原文。批注仍保留为待处理，可查看内容后编辑、结案或删除。
       </div>
 
       <div>
@@ -402,8 +412,7 @@ function locateDetails() {
         </p>
       </div>
       <div v-if="detailAnnotation.resolvedAt" class="text-xs text-base-content/50">
-        处理时间：{{ timeLabel(detailAnnotation.resolvedAt) }}
-        <span v-if="detailAnnotation.resolvedBy"> · 处理人：{{ detailAnnotation.resolvedBy }}</span>
+        处理于 {{ timeLabel(detailAnnotation.resolvedAt) }}
       </div>
     </div>
     <template #footer>
