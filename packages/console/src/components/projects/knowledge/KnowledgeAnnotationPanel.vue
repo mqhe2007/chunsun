@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
-import { Check, Pencil, RotateCcw, Trash2 } from "@lucide/vue";
-import { AppField } from "@/ui";
+import { computed, nextTick, ref, watch } from "vue";
+import { Check, Eye, Pencil, RotateCcw, Trash2 } from "@lucide/vue";
+import { AppField, AppModal } from "@/ui";
 import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
 
 /**
@@ -34,6 +34,14 @@ const emit = defineEmits<{
 
 const editingId = ref<string | null>(null);
 const editingBody = ref("");
+
+const detailAnnotation = ref<KnowledgeAnnotation | null>(null);
+const detailOpen = computed({
+  get: () => detailAnnotation.value !== null,
+  set: (open: boolean) => {
+    if (!open) detailAnnotation.value = null;
+  },
+});
 
 const resolveId = ref<string | null>(null);
 const resolveOutcome = ref<"addressed" | "dismissed">("addressed");
@@ -115,6 +123,29 @@ function confirmResolve(id: string) {
 function anchorQuote(ann: KnowledgeAnnotation): string {
   return (ann.anchorText ?? "").trim();
 }
+
+function openDetails(ann: KnowledgeAnnotation) {
+  detailAnnotation.value = ann;
+}
+
+const statusLabel: Record<KnowledgeAnnotation["status"], string> = {
+  open: "待处理",
+  stale: "原文已变更",
+  resolved: "已处理",
+};
+
+function statusClass(status: KnowledgeAnnotation["status"]): string {
+  if (status === "resolved") return "badge-success";
+  if (status === "stale") return "badge-warning";
+  return "badge-primary";
+}
+
+function locateDetails() {
+  const id = detailAnnotation.value?.id;
+  if (!id) return;
+  detailAnnotation.value = null;
+  emit("scroll-to-anchor", id);
+}
 </script>
 
 <template>
@@ -144,28 +175,36 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
           class="card bg-base-200/40 scroll-mt-4"
         >
           <div class="card-body gap-1 p-2.5">
-            <button
-              type="button"
-              class="w-full whitespace-pre-wrap text-left text-[13px] leading-snug disabled:cursor-default disabled:opacity-100"
-              :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
-              :disabled="!anchorQuote(ann)"
-              :title="anchorQuote(ann) ? '点击定位原文' : undefined"
-              @click.stop="emit('scroll-to-anchor', ann.id)"
-            >
-              {{ ann.body }}
-            </button>
-
-            <div class="flex items-center gap-1.5">
-              <span v-if="ann.status === 'stale'" class="badge badge-warning badge-xs shrink-0">
-                原文已变更
+            <div class="flex min-w-0 items-center gap-1.5">
+              <button
+                type="button"
+                class="min-w-0 flex-1 truncate text-left text-[13px] leading-snug disabled:cursor-default disabled:opacity-100"
+                :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
+                :disabled="!anchorQuote(ann)"
+                :title="ann.body"
+                @click.stop="emit('scroll-to-anchor', ann.id)"
+              >
+                {{ ann.body }}
+              </button>
+              <span class="badge badge-xs shrink-0" :class="statusClass(ann.status)">
+                {{ statusLabel[ann.status] }}
               </span>
               <span
-                class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                class="max-w-24 shrink-0 truncate text-[11px] text-base-content/50"
                 :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
               >
                 {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
               </span>
               <div class="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-square btn-xs"
+                  aria-label="查看批注详情"
+                  title="查看详情"
+                  @click.stop="openDetails(ann)"
+                >
+                  <Eye :size="13" aria-hidden="true" />
+                </button>
                 <template v-if="isAuthor(ann)">
                   <button
                     type="button"
@@ -276,29 +315,35 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
             class="card bg-base-100"
           >
             <div class="card-body gap-1 p-2.5">
-              <button
-                type="button"
-                class="w-full whitespace-pre-wrap text-left text-[13px] leading-snug text-base-content/70 disabled:cursor-default disabled:opacity-100"
-                :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
-                :disabled="!anchorQuote(ann)"
-                :title="anchorQuote(ann) ? '点击定位原文' : undefined"
-                @click.stop="emit('scroll-to-anchor', ann.id)"
-              >
-                {{ ann.body }}
-              </button>
-              <div class="flex items-center gap-1.5">
-                <span
-                  class="badge badge-xs shrink-0"
-                  :class="ann.outcome === 'dismissed' ? 'badge-ghost' : 'badge-success'"
+              <div class="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 truncate text-left text-[13px] leading-snug text-base-content/70 disabled:cursor-default disabled:opacity-100"
+                  :class="anchorQuote(ann) ? 'cursor-pointer transition-colors hover:text-primary' : ''"
+                  :disabled="!anchorQuote(ann)"
+                  :title="ann.body"
+                  @click.stop="emit('scroll-to-anchor', ann.id)"
                 >
-                  {{ outcomeLabel[ann.outcome ?? ""] ?? "已处理" }}
+                  {{ ann.body }}
+                </button>
+                <span class="badge badge-xs shrink-0" :class="statusClass(ann.status)">
+                  {{ statusLabel[ann.status] }}
                 </span>
                 <span
-                  class="min-w-0 flex-1 truncate text-[11px] text-base-content/50"
+                  class="max-w-24 shrink-0 truncate text-[11px] text-base-content/50"
                   :title="`${ann.createdBy} · ${timeLabel(ann.createdAt)}`"
                 >
                   {{ ann.createdBy }} · {{ shortTime(ann.createdAt) }}
                 </span>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-square btn-xs shrink-0"
+                  aria-label="查看批注详情"
+                  title="查看详情"
+                  @click.stop="openDetails(ann)"
+                >
+                  <Eye :size="13" aria-hidden="true" />
+                </button>
                 <button
                   type="button"
                   class="btn btn-ghost btn-square btn-xs shrink-0"
@@ -309,18 +354,70 @@ function anchorQuote(ann: KnowledgeAnnotation): string {
                   <RotateCcw :size="13" aria-hidden="true" />
                 </button>
               </div>
-              <p
-                v-if="ann.resolvedNote"
-                class="rounded-box bg-base-200/60 px-2 py-1 text-[11px] text-base-content/70"
-              >
-                依据：{{ ann.resolvedNote }}
-              </p>
             </div>
           </div>
         </div>
       </details>
     </template>
   </div>
+
+  <AppModal
+    v-model="detailOpen"
+    :title="detailAnnotation ? '批注详情' : undefined"
+    width-class="max-w-2xl"
+  >
+    <div v-if="detailAnnotation" class="flex flex-col gap-4 text-sm">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="badge" :class="statusClass(detailAnnotation.status)">
+          {{ statusLabel[detailAnnotation.status] }}
+        </span>
+        <span
+          v-if="detailAnnotation.status === 'resolved' && detailAnnotation.outcome"
+          class="badge badge-ghost"
+        >
+          {{ outcomeLabel[detailAnnotation.outcome] ?? "已处理" }}
+        </span>
+        <span class="text-xs text-base-content/50">
+          {{ detailAnnotation.createdBy }} · {{ timeLabel(detailAnnotation.createdAt) }}
+        </span>
+      </div>
+
+      <div>
+        <div class="mb-1 text-xs font-medium text-base-content/50">批注内容</div>
+        <p class="whitespace-pre-wrap break-words leading-relaxed">{{ detailAnnotation.body }}</p>
+      </div>
+
+      <div v-if="anchorQuote(detailAnnotation)">
+        <div class="mb-1 text-xs font-medium text-base-content/50">引用原文</div>
+        <blockquote class="max-h-48 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-primary/60 pl-3 leading-relaxed text-base-content/70">
+          {{ anchorQuote(detailAnnotation) }}
+        </blockquote>
+      </div>
+      <p v-else class="text-xs text-base-content/50">针对整篇文档的批注</p>
+
+      <div v-if="detailAnnotation.status === 'resolved' && detailAnnotation.resolvedNote">
+        <div class="mb-1 text-xs font-medium text-base-content/50">处理依据</div>
+        <p class="whitespace-pre-wrap break-words rounded-box bg-base-200/60 px-3 py-2 leading-relaxed">
+          {{ detailAnnotation.resolvedNote }}
+        </p>
+      </div>
+      <div v-if="detailAnnotation.resolvedAt" class="text-xs text-base-content/50">
+        处理时间：{{ timeLabel(detailAnnotation.resolvedAt) }}
+        <span v-if="detailAnnotation.resolvedBy"> · 处理人：{{ detailAnnotation.resolvedBy }}</span>
+      </div>
+    </div>
+    <template #footer>
+      <button
+        v-if="detailAnnotation?.anchorText?.trim()"
+        type="button"
+        class="btn btn-ghost"
+        @click="locateDetails"
+      >
+        定位原文
+      </button>
+      <button type="button" class="btn btn-primary" @click="detailAnnotation = null">关闭</button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
