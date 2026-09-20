@@ -111,17 +111,20 @@ DIST_FILES=(
 )
 
 OS_NAME="$(uname -s)"
+MACHINE_ARCH="$(uname -m)"
 
 can_run() {
   case "$OS_NAME" in
     Darwin)
       case "$1" in
-        chunsun-cli-darwin-*) return 0 ;;
+        chunsun-cli-darwin-arm64-*) [[ "$MACHINE_ARCH" == "arm64" ]] && return 0 ;;
+        chunsun-cli-darwin-x64-*) [[ "$MACHINE_ARCH" == "x86_64" ]] && return 0 ;;
       esac
       ;;
     Linux)
       case "$1" in
-        chunsun-cli-linux-*) return 0 ;;
+        chunsun-cli-linux-x64-*) [[ "$MACHINE_ARCH" == "x86_64" ]] && return 0 ;;
+        chunsun-cli-linux-arm64-*) [[ "$MACHINE_ARCH" == "aarch64" || "$MACHINE_ARCH" == "arm64" ]] && return 0 ;;
       esac
       ;;
     MINGW* | MSYS* | CYGWIN*)
