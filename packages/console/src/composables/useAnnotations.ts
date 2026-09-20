@@ -76,7 +76,7 @@ export function useAnnotations(projectId: () => string, docRef: () => string) {
     return true;
   }
 
-  /** 结案 / 重新打开。结案必须带 outcome（后端缺省 addressed）与依据 note。 */
+  /** 结案 / 重新打开。结案必须带明确 outcome 与可核查依据。 */
   async function setStatus(
     id: string,
     status: "open" | "resolved",

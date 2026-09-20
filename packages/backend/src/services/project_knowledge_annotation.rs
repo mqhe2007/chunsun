@@ -1,9 +1,9 @@
 //! 批注 → Agent 提示词的注入聚合（需求 u-WPvdvYh4Fw 第 3 步，方案 A）。
 //!
-//! **方案 A 的要点**：批注不经过 harness 技能模板，而是由后端折叠进知识读取响应。
-//! 这样 CLI（`chunsun knowledge` / `chunsun knowledge doc`）与控制台阅读页拿到的是
+//! **方案 A 的要点**：批注数据由后端折叠进知识读取响应，CLI
+//! （`chunsun knowledge` / `chunsun knowledge doc`）与控制台阅读页拿到的是
 //! **同一份数据**，不存在"Agent 看到的批注"和"人看到的批注"两套真相。
-//! 模板侧零改动是硬约束——模板版本号是校验过的，动它会让存量项目全部失配。
+//! harness 模板只负责处理顺序与闭环纪律，不复制批注正文。
 //!
 //! 两种形态，按端点的用途分：
 //!
@@ -12,8 +12,9 @@
 //! | `GET /knowledge`、`GET /knowledge/documents?strategy=` | **摘要** | Agent 一上来就拉全量知识，批注必须省着给 |
 //! | `GET /knowledge/documents/:docId`、`GET /knowledge/constitution` | **全量** | 单篇深读，正是要改这篇文档，批注就是改动清单 |
 //!
-//! **只注入 open**。resolved 不进提示词：它已经被处理过，再进 prompt 纯挤上下文，
-//! 而且会让 Agent 重复处理同一件事。阅读页与编辑态仍然看得到 resolved
+//! 列表摘要只注入 open；单篇深读注入 open + stale。stale 仍是未处理反馈，只是原锚点
+//! 已失效，Agent 需结合当前正文评审。resolved 不进提示词：它已经被处理过，再进 prompt
+//! 会让 Agent 重复处理同一件事。阅读页与编辑态仍然看得到 resolved
 //! （默认折叠但可见）——"不进 prompt"和"对人不可见"是两件事，不要混。
 
 use sqlx::PgPool;
@@ -78,24 +79,26 @@ fn truncate(s: &str, limit: usize) -> String {
     format!("{cut}…")
 }
 
-/// 组装某个 `docRef` 的 open 批注注入块（全量形态）。
+/// 组装某个 `docRef` 的待处理批注注入块（全量形态，open + stale）。
 ///
-/// 返回 `None` 表示没有 open 批注——此时**不产生 `annotations` 字段**，
+/// 返回 `None` 表示没有待处理批注——此时**不产生 `annotations` 字段**，
 /// 保持与旧响应字节级一致（CLI 与存量对拍脚本靠这个）。
 pub fn build_block(
     rows: &[ann_repo::KnowledgeAnnotationRow],
 ) -> Option<serde_json::Value> {
-    let open: Vec<&ann_repo::KnowledgeAnnotationRow> =
-        rows.iter().filter(|r| r.status == "open").collect();
-    if open.is_empty() {
+    let pending: Vec<&ann_repo::KnowledgeAnnotationRow> = rows
+        .iter()
+        .filter(|r| r.status == "open" || r.status == "stale")
+        .collect();
+    if pending.is_empty() {
         return None;
     }
 
-    let total = open.len();
+    let total = pending.len();
     let mut used = 0usize;
     let mut included = Vec::with_capacity(total);
     let mut dropped = 0usize;
-    for row in &open {
+    for row in &pending {
         let dto = detailed(row);
         let cost = dto.to_string().encode_utf16().count();
         if used + cost > TOTAL_LIMIT && !included.is_empty() {
@@ -113,7 +116,7 @@ pub fn build_block(
         "hint": if dropped > 0 {
             format!("尚有 {dropped} 条批注未展开（超出注入体积上限），可用 `chunsun knowledge doc <docId>` 逐条查看")
         } else {
-            "以上为本文档的全部未处理批注".to_string()
+            "以上为本文档的全部未处理批注（open + stale）".to_string()
         },
     });
     if dropped > 0 {
@@ -131,7 +134,8 @@ pub async fn load_block_for_doc(
     doc_kind: &str,
     document_id: Option<&str>,
 ) -> Result<Option<serde_json::Value>, AppError> {
-    let rows = ann_repo::list_open_annotations(pool, project_id, doc_kind, document_id).await?;
+    let rows =
+        ann_repo::list_pending_annotations_for_doc(pool, project_id, doc_kind, document_id).await?;
     Ok(build_block(&rows))
 }
 
@@ -188,17 +192,18 @@ mod tests {
     }
 
     #[test]
-    fn resolved_annotations_are_excluded_from_prompt() {
+    fn pending_annotations_include_stale_but_exclude_resolved() {
         let rows = vec![
             row("a1", "open", Some("锚点"), "未处理"),
             row("a2", "resolved", Some("锚点"), "已处理"),
             row("a3", "stale", Some("锚点"), "漂移了"),
         ];
         let block = build_block(&rows).expect("有 open 批注");
-        assert_eq!(block["total"], 1);
+        assert_eq!(block["total"], 2);
         let arr = block["annotations"].as_array().expect("array");
-        assert_eq!(arr.len(), 1);
+        assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["id"], "a1");
+        assert_eq!(arr[1]["id"], "a3");
     }
 
     #[test]

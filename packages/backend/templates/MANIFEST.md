@@ -55,6 +55,12 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ④console 知识库列表按层级缩进/折叠/「N 分册」徽标，阅读页新增面包屑与分册清单，新建/编辑可选「所属主文档」；
 > ⑤skill.md 新增「主文档与分册」契约（先读主文档再按需拉分册），commands.md 同步命令。
 >
+> 2026-09-20-knowledge-annotation-loop：知识批注 Agent 闭环（需求 u-WPvdvYh4Fw 迭代）——
+> ①启动上下文新增全项目待处理批注清单，覆盖 open/stale 与 eager/lazy 文档；
+> ②批注优先于需求正文，逐条深读目标文档、评审、reflect、结案并重查清单；
+> ③结案必须显式 addressed/dismissed 并填写可核查依据，需用户决策时不得结案；
+> ④CLI 新增 `knowledge annotation list|resolve|reopen`，`knowledge doc/update` 支持 constitution/memory 系统文档。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

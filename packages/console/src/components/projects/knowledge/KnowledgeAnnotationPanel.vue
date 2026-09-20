@@ -116,7 +116,9 @@ function startResolve(id: string) {
 }
 
 function confirmResolve(id: string) {
-  emit("resolve", id, resolveOutcome.value, resolveNote.value.trim());
+  const note = resolveNote.value.trim();
+  if (!note) return;
+  emit("resolve", id, resolveOutcome.value, note);
   resolveId.value = null;
 }
 
@@ -268,12 +270,17 @@ function locateDetails() {
                   v-model="resolveNote"
                   class="textarea textarea-bordered w-full text-xs"
                   rows="2"
-                  placeholder="改了哪里 / 为什么不改（建议填写）"
+                  placeholder="改了哪里 / 为什么不改"
                 />
               </AppField>
               <div class="flex justify-end gap-2">
                 <button type="button" class="btn btn-ghost btn-xs" @click="resolveId = null">取消</button>
-                <button type="button" class="btn btn-primary btn-xs" @click="confirmResolve(ann.id)">
+                <button
+                  type="button"
+                  class="btn btn-primary btn-xs"
+                  :disabled="!resolveNote.trim()"
+                  @click="confirmResolve(ann.id)"
+                >
                   确认结案
                 </button>
               </div>

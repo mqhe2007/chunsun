@@ -44,9 +44,12 @@ chunsun case status <需求ID> <用例ID> <passed|failed|blocked|skipped> [--res
 ```bash
 chunsun knowledge [--json]                                      # 项目知识概览（宪法+自定义文档+需求/环境变量统计；树形缩进展示主文档/分册）
 chunsun knowledge index [--json]                                # 知识目录：树形展示（主文档标注 N 分册），元信息含 parentId/depth
-chunsun knowledge doc <文档ID|constitution> [--json]             # 单条查询：面包屑（所属主文档链）+ 子文档清单 + 正文
+chunsun knowledge doc <文档ID|constitution|memory> [--json]      # 单条查询：面包屑（所属主文档链）+ 子文档清单 + 正文/批注
 chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy] [--parent <主文档ID>]  # 创建知识文档（保持不支持删除）
-chunsun knowledge update <文档ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>] [--parent <主文档ID|空串=解除>]  # 更新知识文档（保持不支持删除）
+chunsun knowledge update <文档ID|constitution|memory> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>] [--parent <主文档ID|空串=解除>]  # 系统文档只允许 --content
+chunsun knowledge annotation list [--json]                       # 全项目待处理批注（open + stale，覆盖 eager/lazy）
+chunsun knowledge annotation resolve <批注ID> --outcome addressed|dismissed --note '<依据>' [--json]
+chunsun knowledge annotation reopen <批注ID> [--json]
 chunsun requirement memory get <需求ID>                          # 拉取需求工作记忆
 chunsun requirement memory put <需求ID> --snapshot '<Markdown>'  # 全量覆盖写回需求工作记忆（≤10k 字符）
 chunsun memory get [--json]                                     # 拉取项目级记忆（跨需求填坑/经验，无则友好提示）
@@ -117,5 +120,6 @@ chunsun knowledge           # 项目知识概览（宪法+自定义文档+需求
 - 存在未决 open decisions → 提示优先确认
 - 长轮次无 test/verify → 提示验收闭环
 - 有 code Step 且其后无 reflect → 提示做一次评审-反思-改进（RRI，见 skill「RRI」节）
+- 有 open/stale 知识批注 → 提示优先完成批注评审闭环
 
 机制可泛化：任何"违反时才提示"的规则都可挂入。

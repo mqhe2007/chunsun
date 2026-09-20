@@ -180,6 +180,33 @@ async fn get_knowledge_doc(
         // 宪法走单独的静态路由，这里不应命中（axum 静态段优先）
         return Err(AppError::bad_request("USE_CONSTITUTION_ENDPOINT"));
     }
+    if doc_id == "memory" {
+        let memory = crate::repos::project_memory::get_project_memory(&state.pool(), &pid).await?;
+        let mut dto = json!({
+            "key": "memory",
+            "title": "项目记忆",
+            "content": memory
+                .as_ref()
+                .and_then(|row| row.snapshot.as_deref())
+                .unwrap_or(""),
+            "system": true,
+            "loadStrategy": "eager",
+            "updatedAt": memory.as_ref().map(|row| dt_value(&row.updated_at)),
+            "breadcrumb": [],
+            "children": [],
+        });
+        if let Some(block) = ann_service::load_block_for_doc(
+            &state.pool(),
+            &pid,
+            "memory",
+            None,
+        )
+        .await?
+        {
+            dto["annotations"] = block;
+        }
+        return Ok(ok(dto));
+    }
     let doc = ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id).await?;
     let Some(doc) = doc else {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));

@@ -436,7 +436,7 @@ async function onResolveAnnotation(
   note: string,
 ) {
   try {
-    if (await setAnnStatus(id, "resolved", { outcome, resolvedNote: note || undefined })) {
+    if (await setAnnStatus(id, "resolved", { outcome, resolvedNote: note })) {
       toast.success("已结案");
     } else {
       toast.error("结案失败");
