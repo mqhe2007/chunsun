@@ -18,6 +18,8 @@
 //! 判定口径必须与前端高亮定位（`console/src/utils/annotationAnchor.ts`）保持一致，
 //! 后端这一份供 Agent 侧读取时复用同一规则。
 
+use std::collections::HashMap;
+
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -309,6 +311,45 @@ fn annotation_dto(row: &ann_repo::KnowledgeAnnotationRow) -> Value {
     })
 }
 
+fn pending_annotation_dto(
+    row: &ann_repo::KnowledgeAnnotationRow,
+    documents: &HashMap<String, (String, String)>,
+) -> Value {
+    let mut dto = annotation_dto(row);
+    let (title, strategy) = match row.doc_kind.as_str() {
+        SYSTEM_CONSTITUTION => ("项目宪法", "eager"),
+        SYSTEM_MEMORY => ("项目记忆", "eager"),
+        _ => row
+            .document_id
+            .as_ref()
+            .and_then(|id| documents.get(id))
+            .map(|(title, strategy)| (title.as_str(), strategy.as_str()))
+            .unwrap_or(("未知文档", "lazy")),
+    };
+    dto["documentTitle"] = Value::String(title.to_string());
+    dto["loadStrategy"] = Value::String(strategy.to_string());
+    dto
+}
+
+fn resolution_details<'a>(
+    status: &str,
+    outcome: Option<&'a str>,
+    note: Option<&'a str>,
+) -> Result<(Option<&'a str>, Option<&'a str>), AppError> {
+    if status != "resolved" {
+        return Ok((None, None));
+    }
+    let outcome = outcome.ok_or_else(|| {
+        AppError::bad_request("ANNOTATION_OUTCOME_REQUIRED")
+            .with_message("结案必须明确 outcome=addressed|dismissed")
+    })?;
+    let note = note.filter(|value| !value.trim().is_empty()).ok_or_else(|| {
+        AppError::bad_request("ANNOTATION_RESOLUTION_NOTE_REQUIRED")
+            .with_message("结案必须填写可核查的处理依据")
+    })?;
+    Ok((Some(outcome), Some(note.trim())))
+}
+
 // ------------------------------------------------------------------ handlers
 
 #[derive(Debug, Deserialize)]
@@ -335,6 +376,67 @@ struct PatchAnnotationBody {
     outcome: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     resolved_note: Option<Option<String>>,
+}
+
+/// `GET /projects/:id/knowledge/annotations`
+///
+/// Agent 启动时使用的项目级待处理队列。与 eager/lazy 无关，open 与 stale 都返回；
+/// 同时先对仍为 open 的锚点做漂移检测，保证返回的是当前真实状态。
+async fn list_pending_annotations(
+    State(state): State<AppState>,
+    CurrentUser(session): CurrentUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let pid = visible(&state, &session, &project_id).await?;
+    let rows = ann_repo::list_pending_annotations_for_project(&state.pool(), &pid).await?;
+
+    let mut grouped: HashMap<(String, Option<String>), Vec<ann_repo::KnowledgeAnnotationRow>> =
+        HashMap::new();
+    for row in &rows {
+        grouped
+            .entry((row.doc_kind.clone(), row.document_id.clone()))
+            .or_default()
+            .push(row.clone());
+    }
+    let mut stale_ids = Vec::new();
+    for ((doc_kind, document_id), group) in grouped {
+        stale_ids.extend(
+            detect_stale(
+                &state,
+                &pid,
+                &doc_kind,
+                document_id.as_deref(),
+                &group,
+            )
+            .await?,
+        );
+    }
+
+    let rows = if stale_ids.is_empty() {
+        rows
+    } else {
+        ann_repo::list_pending_annotations_for_project(&state.pool(), &pid).await?
+    };
+    let documents: HashMap<String, (String, String)> =
+        ctx_repo::list_knowledge_document_nodes(&state.pool(), &pid)
+            .await?
+            .into_iter()
+            .map(|node| {
+                (
+                    node.doc.id,
+                    (node.doc.title, node.doc.load_strategy),
+                )
+            })
+            .collect();
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|row| pending_annotation_dto(row, &documents))
+        .collect();
+    Ok(ok(json!({
+        "total": items.len(),
+        "annotations": items,
+        STALE_DETECTED_KEY: stale_ids,
+    })))
 }
 
 /// `GET /projects/:id/knowledge/documents/:docRef/annotations`
@@ -438,14 +540,12 @@ async fn patch_annotation(
         Some(s) => {
             // 只对 resolved 记结论；open / stale 一律清空结案痕迹（重新打开必须
             // 把 outcome / note / resolvedBy 一起抹掉，否则回退后仍带着上一轮结论）。
-            let outcome = match s {
-                "resolved" => Some(new_outcome.unwrap_or("addressed")),
-                _ => None,
-            };
+            let (outcome, note) =
+                resolution_details(s, new_outcome.as_deref(), new_note.as_deref())?;
             Some(ann_repo::StatusChange {
                 status: s,
                 outcome,
-                note: new_note.as_deref(),
+                note,
                 by: &session.user.user_id,
             })
         }
@@ -481,6 +581,10 @@ async fn delete_annotation(
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route(
+            "/projects/{projectId}/knowledge/annotations",
+            get(list_pending_annotations),
+        )
         .route(
             "/projects/{projectId}/knowledge/documents/{docRef}/annotations",
             get(list_annotations).post(create_annotation),
@@ -544,5 +648,17 @@ mod tests {
     fn empty_anchor_means_document_level() {
         assert!(anchor_resolvable("随便什么正文", ""));
         assert!(anchor_resolvable("随便什么正文", "   "));
+    }
+
+    #[test]
+    fn resolving_requires_explicit_outcome_and_note() {
+        assert!(resolution_details("resolved", None, Some("改了第一节")).is_err());
+        assert!(resolution_details("resolved", Some("addressed"), None).is_err());
+        assert!(resolution_details("resolved", Some("dismissed"), Some("  ")).is_err());
+        assert_eq!(
+            resolution_details("resolved", Some("addressed"), Some("  已补充示例  "))
+                .expect("valid resolution"),
+            (Some("addressed"), Some("已补充示例"))
+        );
     }
 }

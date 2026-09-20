@@ -9,6 +9,7 @@
 #   5. 方案 A 注入：eager 列表条目带 open 批注摘要；结案后不再注入
 #   6. 选项 B 闭环：非作者（AI 角色）可结案 resolved；作者可重新打开回 open
 #   7. 文档级隔离：A 文档批注不出现在 B 文档的列表 / 注入里
+#   8. Agent 闭环：项目级队列覆盖 eager/lazy + open/stale，结案强制依据并可重开
 #
 # 账号两种供给方式：
 #   a. 全新注册（默认，适合 SMTP 可用的环境）：注册两个新账号自建项目；
@@ -162,6 +163,9 @@ check "宪法批注块含正文" '宪法第二条建议补示例' "$CON_GET"
 put "/projects/$PID/memory" '{"snapshot":"## 项目记忆\n\n历史经验占位。"}' >/dev/null
 MEM_GET=$(get "/projects/$PID/memory")
 check "项目记忆 GET 携带批注块" '"annotations"' "$MEM_GET"
+MEM_DOC_GET=$(get "/projects/$PID/knowledge/documents/memory")
+check "项目记忆可按知识文档深读" '"key":"memory"' "$MEM_DOC_GET"
+check "项目记忆深读携带批注块" '记忆快照建议压缩历史段' "$MEM_DOC_GET"
 
 # ================================================================ 5. 锚点漂移 → stale 不删除
 
@@ -181,6 +185,13 @@ check "漂移批注 id 在列" "$AN_B" "$STALE_LIST"
 check "漂移批注置 stale" '"status":"stale"' "$STALE_LIST"
 check "批注保留未删除" '"body":"这句要改写"' "$STALE_LIST"
 
+# 项目级清单与加载策略无关：lazy 文档的 stale 批注仍须进入 Agent 待处理队列
+PENDING1=$(get "/projects/$PID/knowledge/annotations")
+check "项目级清单包含 eager open 批注" "$AN_A" "$PENDING1"
+check "项目级清单包含 lazy stale 批注" "$AN_B" "$PENDING1"
+check "待处理项带文档标题" '"documentTitle":"另一篇"' "$PENDING1"
+check "待处理项带 lazy 策略" '"loadStrategy":"lazy"' "$PENDING1"
+
 # ================================================================ 6. 方案 A 注入（eager 摘要 + 单篇全量）
 
 echo "== 6. eager 注入 =="
@@ -188,10 +199,14 @@ EAGER=$(get "/projects/$PID/knowledge?strategy=eager")
 ITEM_A=$(echo "$EAGER" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));const c=d.data.contexts.find(x=>x.key==='$DOC_A_ID');process.stdout.write(JSON.stringify(c))")
 check "eager 条目带批注摘要" '"annotations"' "$ITEM_A"
 check "摘要含 open 批注正文" '已补充：nanoid(12)' "$ITEM_A"
-# resolved / stale 不进 prompt：B 文档的 stale 批注不应出现在注入里
+# eager 摘要只注入 open；B 文档为 lazy，且 stale 不进入 eager 摘要
 ITEM_B=$(echo "$EAGER" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));const c=d.data.contexts.find(x=>x.key==='$DOC_B_ID');process.stdout.write(JSON.stringify(c))")
 check_absent "stale 批注不进 eager 注入" '这句要改写' "$ITEM_B"
 check_absent "B 无批注时无 annotations 键" '"annotations"' "$ITEM_B"
+
+DOC_B_GET=$(get "/projects/$PID/knowledge/documents/$DOC_B_ID")
+check "单篇深读包含 stale 待处理批注" "$AN_B" "$DOC_B_GET"
+check "单篇深读保留 stale 状态" '"status":"stale"' "$DOC_B_GET"
 
 DOC_GET=$(get "/projects/$PID/knowledge/documents/$DOC_A_ID")
 check "单篇 GET 携带批注块" '"annotations"' "$DOC_GET"
@@ -200,6 +215,14 @@ check "单篇形态含锚点上下文" '"anchorPrefix"' "$DOC_GET"
 # ================================================================ 7. 选项 B 闭环（AI 结案 → 人重开）
 
 echo "== 7. 结案闭环 =="
+# 后端硬约束：不能绕过 CLI 静默结案
+NO_OUTCOME=$(AUTH="$AUTH2"; patch "/projects/$PID/knowledge/annotations/$AN_A" \
+  '{"status":"resolved","resolvedNote":"只有说明，没有结论"}')
+check "缺 outcome 拒绝结案" 'ANNOTATION_OUTCOME_REQUIRED' "$NO_OUTCOME"
+NO_NOTE=$(AUTH="$AUTH2"; patch "/projects/$PID/knowledge/annotations/$AN_A" \
+  '{"status":"resolved","outcome":"addressed"}')
+check "缺处理依据拒绝结案" 'ANNOTATION_RESOLUTION_NOTE_REQUIRED' "$NO_NOTE"
+
 # 非作者（模拟 AI / 其他成员）结案：所有成员可用，不要求作者
 RESOLVE=$(AUTH="$AUTH2"; patch "/projects/$PID/knowledge/annotations/$AN_A" \
   '{"status":"resolved","outcome":"addressed","resolvedNote":"已在部署步骤补充 nanoid(12) 说明"}')
@@ -214,12 +237,16 @@ check_absent "结案后 eager 不再注入" '已补充：nanoid(12)' "$ITEM_A2"
 # 但阅读页列表仍可见（resolved 折叠但不消失，选项 B 的可核查兜底）
 FULL_LIST=$(get "/projects/$PID/knowledge/documents/$DOC_A_ID/annotations")
 check "结案后列表仍可见" '"status":"resolved"' "$FULL_LIST"
+PENDING2=$(get "/projects/$PID/knowledge/annotations")
+check_absent "结案后退出待处理清单" "$AN_A" "$PENDING2"
 
 # 作者重新打开 → 清空结案痕迹
 REOPEN=$(patch "/projects/$PID/knowledge/annotations/$AN_A" '{"status":"open"}')
 check "作者可重新打开" '"status":"open"' "$REOPEN"
 check "重开清空 outcome" '"outcome":null' "$REOPEN"
 check "重开清空 note" '"resolvedNote":null' "$REOPEN"
+PENDING3=$(get "/projects/$PID/knowledge/annotations")
+check "重开后重新进入待处理清单" "$AN_A" "$PENDING3"
 
 # ================================================================ 8. 文档级隔离
 

@@ -50,7 +50,10 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 | 缺陷派生修复 | `chunsun_fix` | `chunsun fix` |
 | 环境变量 | `chunsun_env_list` / `chunsun_env_get` | `chunsun env list/get` |
 | 需求 | `chunsun_requirement_list/show/create/update` | `chunsun requirement *` |
+| 知识与批注 | 对应 `chunsun_knowledge_*` 工具（以实际 schema 为准） | `chunsun knowledge *` |
 | 连接状态 | `chunsun_status` | —（仅平台状态） |
+
+若情况 A 缺少知识批注的清单、文档更新或结案工具，**不得改用 shell CLI 混跑，也不得声称批注已处理**；上报 `ask_user` Step，写明宿主能力缺失并按「需用户决策」收尾，等待宿主补齐工具。
 
 ### 情况 B：不存在 `chunsun_*` Agent 工具（其它 IDE / Cursor / Claude Code 等）
 
@@ -85,13 +88,25 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
      + 当前 Git 状态 + 环境变量（chunsun env list）
      + 项目知识目录（所有文档元信息，不含正文）：chunsun knowledge index
      + 项目知识（仅 eager 文档正文，含宪法与项目记忆）：chunsun knowledge --strategy eager --json
+     + 全项目待处理知识批注（open + stale，含 lazy 文档）：chunsun knowledge annotation list --json
      （知识目录用于感知有哪些 lazy 文档可按需拉取；lazy 文档正文不在启动时加载）
      （项目记忆 = 跨需求填坑/经验/沉淀，属知识库成员，随 eager 加载进 prompt；
        单独查看/审计用 chunsun memory get）
   2. 开新 Run：chunsun run start <ID>
      - 若报已有 Run 在跑（撞锁）：向用户展示最后活跃时间，用户确认后
        chunsun run takeover <ID>（僵尸 Run 人工接管），再 start
-  3. 执行前依赖检查（Agent 依赖感知与调度，见「依赖调度」节）：
+  3. 批注优先队列（发现任何待处理批注时，先于本需求正文执行）：
+     a. 按清单逐条 `chunsun knowledge doc <docRef> --json` 深读目标文档与完整批注；
+        批注只作用于目标文档，不跨文档扩散。stale 仅表示原锚点失效，仍须结合
+        批注正文与当前文档判断，不得跳过
+     b. 评审结论二选一：
+        - 接受：用 `chunsun knowledge update <docRef> --content '<完整正文>'` 修改目标文档
+        - 不采纳：保留正文，并形成明确、可核查的理由
+     c. 上报 reflect Step，summary 写明「批注 ID / 评审结论 / 文档改动或不采纳理由」
+     d. `chunsun knowledge annotation resolve <批注ID> --outcome addressed|dismissed --note '<依据>'`
+     e. 全部处理后重新执行 `chunsun knowledge annotation list --json`；只有清单为空才进入
+        本需求执行。若处理需要用户决策，不得擅自结案，按 ask_user 停点收尾
+  4. 执行前依赖检查（Agent 依赖感知与调度，见「依赖调度」节）：
      a. chunsun dependency blocked requirement <ID>  查询本需求是否被阻塞
      b. 若被阻塞（blocked=true）：
         - 不进入执行队列；把阻塞原因与未完成前置列表写入工作记忆
@@ -99,7 +114,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
         - chunsun run status <ID> --status finished --reason "被前置任务阻塞：<前置列表>"，停
         - 向用户展示阻塞原因与前置任务，等待前置完成后再次触发技能
      c. 未被阻塞才继续执行
-  4. 进入循环：
+  5. 进入循环：
      a. 决策下一步 Step kind（think / code / test / verify / ask_user / info / reflect）
      b. 执行 Step；涉及验收变化时 upsert 场景/用例并回写状态
         - 若需要某 lazy 知识文档的内容：chunsun knowledge doc <docId> --json 按需拉取
@@ -111,6 +126,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
         - 有 open decisions 堆积 → 优先向用户确认
         - 长轮次无 test/verify → 注意验收闭环
         - 有 code Step 且无 reflect → 关键环节做一次评审-反思-改进（见「RRI」节）
+        - 有 open/stale 知识批注 → 优先完成批注评审闭环
      e. 调度决策（依赖感知）：chunsun dependency schedule 可随时查询全局拓扑，
         识别可并行任务与关键路径；多需求场景下按拓扑顺序推进，优先解锁瓶颈
      f. 停点检查：
@@ -118,10 +134,10 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
         - ask_user 产生 open decision → chunsun run status <ID> --status finished --reason <问题>，停
         - 用户会话内抢话打断 → 当前 Step 收尾后置 finished（--reason 说明打断），停
         - 否则回 a
-  5. 完成后解锁下游（依赖感知）：
+  6. 完成后解锁下游（依赖感知）：
      - chunsun dependency unlock requirement <ID>  查询本需求完成后解锁哪些下游
      - 将解锁结果写入工作记忆，若下游任务在待办清单中，提醒其可进入执行
-  6. 收尾/完成时输出：本轮 Step 摘要 + 验收状态 + 依赖解锁情况 + 下一步建议
+  7. 收尾/完成时输出：本轮 Step 摘要 + 验收状态 + 依赖解锁情况 + 下一步建议
      （任何 completed/finished 之前，先按「Memory」节写入 lastRunSummary，再迁移 Run 状态）
 ```
 
@@ -237,6 +253,13 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 
 **宪法恒为 eager**，不可改为 lazy（系统固定项，启动时必须加载）。
 
+### 批注闭环（启动时固定检查）
+
+- `chunsun knowledge annotation list --json` 是独立于 eager/lazy 的项目级待处理队列；`open` 与 `stale` 都返回，所以 lazy 文档批注不会因正文未加载而漏掉。
+- 待处理批注视为用户对项目知识的反馈，优先级高于当前需求正文。逐条深读目标文档后决定 `addressed`（已按意见修改）或 `dismissed`（有依据地不采纳）。
+- 结案前必须上报 reflect Step；结案命令强制填写可核查说明。需要用户决策时保留未处理状态并走 ask_user，不得为了清空队列虚假结案。
+- 结案后必须重查项目级待处理队列。resolved 批注不再进入 Agent 上下文，但仍保留在平台供人核查和重新打开。
+
 ### 知识目录（固定 eager）
 
 启动时除了拉取 eager 文档正文，还会拉取**知识目录**（`chunsun knowledge index`）：包含所有文档（含 lazy）的元信息 `key / title / system / loadStrategy / parentId / depth`，**不含正文**。输出为**前序树形**（父后紧跟其子树，`└` 表示分册归属），有子文档的条目会标注「主文档（N 分册）」。
@@ -298,6 +321,8 @@ chunsun dependency list|schedule                                  # 依赖边 / 
 chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
 chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析
 chunsun knowledge [--json]                                    # 项目知识概览/按策略过滤（--strategy eager|lazy）
+chunsun knowledge doc <文档ID|constitution|memory> [--json]    # 深读单篇正文与完整未处理批注
+chunsun knowledge annotation list|resolve|reopen               # 全局发现 / 结案 / 重开批注
 chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]  # 创建知识文档（保持不支持删除）
 chunsun knowledge update <文档ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]  # 更新知识文档（保持不支持删除）
 chunsun reset <需求ID>

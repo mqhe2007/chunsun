@@ -67,8 +67,9 @@ pub async fn list_annotations(
     Ok(rows)
 }
 
-/// 只取 open 批注（Agent 注入用）：resolved / stale 不进 prompt。
-pub async fn list_open_annotations(
+/// 单篇深读的待处理批注：open 与 stale 都进 prompt，resolved 不进。
+/// stale 只是锚点失效，仍需要 Agent 结合批注正文和当前文档评审。
+pub async fn list_pending_annotations_for_doc(
     pool: &PgPool,
     project_id: &str,
     doc_kind: &str,
@@ -77,7 +78,7 @@ pub async fn list_open_annotations(
     let sql = format!(
         "SELECT {COLS} FROM project_knowledge_annotation \
          WHERE project_id = $1 AND doc_kind = $2 AND document_id IS NOT DISTINCT FROM $3 \
-           AND status = 'open' \
+           AND status IN ('open', 'stale') \
          ORDER BY created_at ASC, id ASC"
     );
     let rows = sqlx::query_as::<_, KnowledgeAnnotationRow>(&sql)
@@ -99,6 +100,26 @@ pub async fn list_open_annotations_for_project(
     let sql = format!(
         "SELECT {COLS} FROM project_knowledge_annotation \
          WHERE project_id = $1 AND status = 'open' \
+         ORDER BY created_at ASC, id ASC"
+    );
+    let rows = sqlx::query_as::<_, KnowledgeAnnotationRow>(&sql)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+/// Agent 启动时的项目级待处理队列：open 与 stale 都必须可发现。
+///
+/// stale 只是锚点已无法定位，不代表反馈已经处理；若在这里过滤掉，文档一经改写，
+/// 最需要人工判断的批注反而会从 Agent 视野中消失。
+pub async fn list_pending_annotations_for_project(
+    pool: &PgPool,
+    project_id: &str,
+) -> Result<Vec<KnowledgeAnnotationRow>, AppError> {
+    let sql = format!(
+        "SELECT {COLS} FROM project_knowledge_annotation \
+         WHERE project_id = $1 AND status IN ('open', 'stale') \
          ORDER BY created_at ASC, id ASC"
     );
     let rows = sqlx::query_as::<_, KnowledgeAnnotationRow>(&sql)

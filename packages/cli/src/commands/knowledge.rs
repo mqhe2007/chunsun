@@ -22,7 +22,7 @@ pub struct KnowledgeArgs {
 enum KnowledgeCommand {
     /// 单条查询知识文档（含宪法；默认输出面包屑/子文档 + 正文，--json 输出原始 JSON）
     Doc {
-        /// 文档 ID 或 "constitution"
+        /// 文档 ID、"constitution" 或 "memory"
         doc_id: String,
         /// 输出原始 JSON
         #[arg(long)]
@@ -33,6 +33,11 @@ enum KnowledgeCommand {
         /// 输出原始 JSON
         #[arg(long)]
         json: bool,
+    },
+    /// 待处理批注：全局清单、结案与重新打开
+    Annotation {
+        #[command(subcommand)]
+        command: KnowledgeAnnotationCommand,
     },
     /// 创建知识文档（保持不支持删除）
     Create {
@@ -71,6 +76,38 @@ enum KnowledgeCommand {
         /// 所属主文档 ID（传空串解除关联，回到根文档）
         #[arg(long)]
         parent: Option<String>,
+        /// 输出原始 JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum KnowledgeAnnotationCommand {
+    /// 列出项目全部待处理批注（open + stale，覆盖 eager / lazy 文档）
+    List {
+        /// 输出原始 JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// 结案批注；必须说明已处理或不采纳，并给出可核查依据
+    Resolve {
+        /// 批注 ID
+        annotation_id: String,
+        /// addressed（已处理）或 dismissed（不采纳）
+        #[arg(long)]
+        outcome: String,
+        /// 改了哪里，或为什么不采纳
+        #[arg(long)]
+        note: String,
+        /// 输出原始 JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// 重新打开已结案批注
+    Reopen {
+        /// 批注 ID
+        annotation_id: String,
         /// 输出原始 JSON
         #[arg(long)]
         json: bool,
@@ -217,19 +254,94 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
     let config = load_config();
     let api = ApiClient::new(&config)?;
 
+    if let Some(KnowledgeCommand::Annotation { command }) = args.command {
+        let base = format!(
+            "/projects/{}/knowledge/annotations",
+            config.project_id
+        );
+        return match command {
+            KnowledgeAnnotationCommand::List { json } => {
+                let raw: Value = api.get(&base)?;
+                let data = raw.get("data").unwrap_or(&raw);
+                if json {
+                    print_json(data)
+                } else {
+                    print_pending_annotations(data)
+                }
+            }
+            KnowledgeAnnotationCommand::Resolve {
+                annotation_id,
+                outcome,
+                note,
+                json,
+            } => {
+                if outcome != "addressed" && outcome != "dismissed" {
+                    return Err(CmdError::new(
+                        "--outcome 只能是 addressed 或 dismissed",
+                    ));
+                }
+                if note.trim().is_empty() {
+                    return Err(CmdError::new("--note 必须填写可核查的处理依据"));
+                }
+                let raw: Value = api.patch(
+                    &format!("{base}/{annotation_id}"),
+                    json!({
+                        "status": "resolved",
+                        "outcome": outcome,
+                        "resolvedNote": note.trim(),
+                    }),
+                )?;
+                let data = raw.get("data").unwrap_or(&raw);
+                if json {
+                    print_json(data)
+                } else {
+                    println!("[chunsun] 批注已结案：{annotation_id}");
+                    println!("  结论：{outcome}");
+                    println!("  依据：{}", note.trim());
+                    Ok(())
+                }
+            }
+            KnowledgeAnnotationCommand::Reopen {
+                annotation_id,
+                json,
+            } => {
+                let raw: Value = api.patch(
+                    &format!("{base}/{annotation_id}"),
+                    json!({ "status": "open" }),
+                )?;
+                let data = raw.get("data").unwrap_or(&raw);
+                if json {
+                    print_json(data)
+                } else {
+                    println!("[chunsun] 批注已重新打开：{annotation_id}");
+                    Ok(())
+                }
+            }
+        };
+    }
+
     // 子命令：单条文档查询
     if let Some(KnowledgeCommand::Doc { doc_id, json }) = args.command {
-        let path = if doc_id == "constitution" {
-            format!("/projects/{}/knowledge/constitution", config.project_id)
-        } else {
-            format!("/projects/{}/knowledge/documents/{}", config.project_id, doc_id)
+        let path = match doc_id.as_str() {
+            "constitution" => format!(
+                "/projects/{}/knowledge/constitution",
+                config.project_id
+            ),
+            "memory" => format!(
+                "/projects/{}/knowledge/documents/memory",
+                config.project_id
+            ),
+            _ => format!(
+                "/projects/{}/knowledge/documents/{}",
+                config.project_id, doc_id
+            ),
         };
         let raw: Value = api.get(&path)?;
-        let data = raw.get("data").unwrap_or(&raw);
+        let data = raw.get("data").unwrap_or(&raw).clone();
         if json {
-            return print_json(data);
+            return print_json(&data);
         }
-        return print_doc_detail(data);
+        return print_doc_detail(&data);
     }
 
     // 子命令：知识目录（树形展示主文档/分册）
@@ -320,6 +432,32 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
             if s != "eager" && s != "lazy" {
                 return Err(CmdError::new("--strategy 只能是 eager 或 lazy"));
             }
+        }
+        if doc_id == "constitution" || doc_id == "memory" {
+            if title.is_some() || strategy.is_some() || sort_order.is_some() || parent.is_some() {
+                return Err(CmdError::new(
+                    "系统文档只能通过 --content 更新正文",
+                ));
+            }
+            let content = content.ok_or_else(|| CmdError::new("请提供 --content"))?;
+            let (path, payload) = if doc_id == "constitution" {
+                (
+                    format!("/projects/{}/knowledge/constitution", config.project_id),
+                    json!({ "content": content }),
+                )
+            } else {
+                (
+                    format!("/projects/{}/memory", config.project_id),
+                    json!({ "snapshot": content }),
+                )
+            };
+            let raw: Value = api.put(&path, payload)?;
+            let data = raw.get("data").unwrap_or(&raw);
+            if json {
+                return print_json(data);
+            }
+            println!("[chunsun] 系统知识文档已更新：{doc_id}");
+            return Ok(());
         }
         let mut body = Map::new();
         if let Some(t) = title {
@@ -479,12 +617,54 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
     println!("\n完整 JSON 含正文：chunsun knowledge --json");
     println!("按策略过滤：chunsun knowledge --strategy eager|lazy");
     println!("知识目录（元信息，不含正文；树形展示主文档/分册）：chunsun knowledge index");
-    println!("单条查询（面包屑/子文档 + 正文）：chunsun knowledge doc <docId|constitution> [--json]");
+    println!("单条查询（面包屑/子文档 + 正文）：chunsun knowledge doc <docId|constitution|memory> [--json]");
+    println!("待处理批注：chunsun knowledge annotation list [--json]");
     println!("创建知识文档：chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy] [--parent <主文档ID>]");
     println!("更新知识文档：chunsun knowledge update <docId> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>] [--parent <主文档ID|空串=解除>]");
     println!("（保持不支持删除知识文档）");
     println!("需求工作记忆：chunsun requirement memory get|put <需求ID>");
     println!("项目级记忆：chunsun memory get|put");
+    Ok(())
+}
+
+fn print_pending_annotations(data: &Value) -> CmdResult {
+    let annotations = data
+        .get("annotations")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    println!("待处理知识批注（{}）：", annotations.len());
+    if annotations.is_empty() {
+        println!("  （无）");
+        return Ok(());
+    }
+    for annotation in annotations {
+        let id = annotation.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let status = annotation
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("open");
+        let doc_ref = annotation
+            .get("docRef")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let title = annotation
+            .get("documentTitle")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知文档");
+        let strategy = annotation
+            .get("loadStrategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("eager");
+        let body = annotation
+            .get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        println!("  - [{status}] {title} (doc={doc_ref}, strategy={strategy}, id={id})");
+        println!("    {body}");
+    }
+    println!("深读目标文档：chunsun knowledge doc <docRef> --json");
+    println!("结案：chunsun knowledge annotation resolve <批注ID> --outcome addressed|dismissed --note '<依据>'");
     Ok(())
 }
 
@@ -593,5 +773,30 @@ mod tests {
         ]);
         assert!(lines[0].contains("主文档（1 分册）"));
         assert!(lines[1].contains("主文档（1 分册）"));
+    }
+
+    #[test]
+    fn pending_annotation_output_shape_accepts_open_and_stale() {
+        let data = json!({
+            "annotations": [
+                {
+                    "id": "a-open",
+                    "status": "open",
+                    "docRef": "constitution",
+                    "documentTitle": "项目宪法",
+                    "loadStrategy": "eager",
+                    "body": "补充示例"
+                },
+                {
+                    "id": "a-stale",
+                    "status": "stale",
+                    "docRef": "lazy-doc",
+                    "documentTitle": "长文档",
+                    "loadStrategy": "lazy",
+                    "body": "原锚点已变化"
+                }
+            ]
+        });
+        assert!(print_pending_annotations(&data).is_ok());
     }
 }

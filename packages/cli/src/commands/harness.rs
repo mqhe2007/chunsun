@@ -200,6 +200,18 @@ fn fetch_reminders(api: &ApiClient, project_id: &str, req: &str) -> Result<Vec<S
         reminders.push(format!("场景「{}」当前为 failing，需修复后置 passing。", s.title));
     }
 
+    // 新版服务提供全项目待处理批注队列。兼容 CLI/服务短暂错版：端点不存在或请求失败时
+    // 不让 run start/remind 整体失败；技能启动上下文仍会显式执行 annotation list。
+    let pending_annotations = api
+        .get::<Value>(&format!("/projects/{project_id}/knowledge/annotations"))
+        .ok()
+        .and_then(|value| pending_annotation_count(&value));
+    if let Some(count) = pending_annotations.filter(|count| *count > 0) {
+        reminders.push(format!(
+            "项目仍有 {count} 条待处理知识批注（open/stale）——先执行 knowledge annotation list 并完成评审闭环，再继续当前任务。"
+        ));
+    }
+
     // 工作记忆拉取一次，供「本轮未写记忆」检查使用（404/失败按无记忆处理）。
     // （2026-09-09 起去掉 openDecisions 检查——记忆改为 Markdown 后无法可靠解析未决决策项，
     //  决策由 AI 在会话中主动提出，不再作为 remind 柔性约束。）
@@ -841,6 +853,19 @@ fn memory_stale_for_run(memory_updated_at: Option<&str>, run_started_at: &str) -
     }
 }
 
+fn pending_annotation_count(value: &Value) -> Option<usize> {
+    value
+        .pointer("/data/total")
+        .and_then(Value::as_u64)
+        .map(|count| count as usize)
+        .or_else(|| {
+            value
+                .pointer("/data/annotations")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,5 +896,15 @@ mod tests {
             Some("2026-09-08T05:00:00Z"),
             "2026-09-08T04:38:26.272173Z"
         ));
+    }
+
+    #[test]
+    fn pending_annotation_count_reads_total_or_array() {
+        assert_eq!(pending_annotation_count(&json!({"data": {"total": 3}})), Some(3));
+        assert_eq!(
+            pending_annotation_count(&json!({"data": {"annotations": [{}, {}]}})),
+            Some(2)
+        );
+        assert_eq!(pending_annotation_count(&json!({"data": {}})), None);
     }
 }
