@@ -19,6 +19,11 @@ export type KnowledgeAnnotation = {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * 能否编辑 / 删除这条批注（作者本人 ∪ 项目创建者 ∪ 平台 ADMIN）。
+   * 由后端按当前登录人算好下发 —— 前端不再自行比 `createdBy`，避免两处判定漂移。
+   */
+  canModerate: boolean;
 };
 
 export type CreateAnnotationPayload = {

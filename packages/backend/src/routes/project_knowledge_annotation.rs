@@ -7,8 +7,10 @@
 //! 权限分三层，不要合并：
 //! 1. **读 / 建**：沿用知识库既有项目可见性（成员 ∪ 创建者 ∪ 平台 ADMIN），
 //!    不可见一律 404 `PROJECT_NOT_FOUND`（与知识域一致，不是 403）。
-//! 2. **改 / 删**：必须是**作者本人** —— 项目级权限不够，须到作者级，
-//!    非作者 403 `ANNOTATION_FORBIDDEN`。
+//! 2. **改 / 删**：**作者本人 ∪ 项目所有者**（所有者 = 项目创建者 `project.user_id`
+//!    ∪ 平台 ADMIN，与 `core/permission_policy` 的 owner 档口径一致）。
+//!    两者都不满足才 403 `ANNOTATION_FORBIDDEN`。所有者的存在意义是治理他人留下的
+//!    批注（作者离职 / 批注本身要撤下），因此鉴权到项目创建者级而非作者级。
 //! 3. **结案 / 重新打开**（PATCH status）：**所有成员可用**。选项 B 既定：
 //!    AI 可自行把批注置 resolved（平台主打 AI 能力，低成本闭环），人可重新打开
 //!    退回 open 兜底。故这里**不能**套用第 2 层的作者校验，否则 AI 无法结案。
@@ -30,11 +32,12 @@ use crate::api::{ok, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
 use crate::core::datetime::to_value as dt_value;
 use crate::core::serde_ext::double_option;
+use crate::repos::project as proj_repo;
 use crate::repos::project_knowledge as ctx_repo;
 use crate::repos::project_knowledge_annotation as ann_repo;
 use crate::repos::project_memory as mem_repo;
-use crate::routes::project_knowledge::visible;
 use crate::routes::validate::{optional_enum, optional_string, required_string};
+use crate::services::project_access::visible_project_id;
 use crate::state::AppState;
 
 /// 批注状态合法值。`stale` 由服务端漂移检测写入，也允许显式传（前端「重新定位失败」
@@ -84,6 +87,67 @@ async fn ensure_host(
             .ok_or_else(|| AppError::not_found("CONTEXT_DOC_NOT_FOUND"))?;
     }
     Ok(())
+}
+
+/// 批注所属项目的访问上下文：项目 id + 项目所有者（创建者）user_id。
+///
+/// 比 `visible()` 多带回 **所有者**，因为改 / 删批注要判到 owner 级：所有者的定义
+/// 与 `core/permission_policy` 的 owner 档保持一致 —— 项目创建者 `project.user_id`，
+/// 平台 ADMIN 由 `is_platform_admin` 另判（不落库，故这里不体现）。
+struct AnnotationScope {
+    project_id: String,
+    owner_id: String,
+    is_platform_admin: bool,
+}
+
+impl AnnotationScope {
+    /// 该用户能否改 / 删**任意**批注（所有者通道）。
+    ///
+    /// 作者通道不在这里判 —— 那是逐条批注的 `created_by` 比对，见 [`can_moderate`]。
+    fn owns_project(&self, user_id: &str) -> bool {
+        self.is_platform_admin || self.owner_id == user_id
+    }
+}
+
+/// 可见性校验并解析所有者。不可见一律 404 `PROJECT_NOT_FOUND`（与知识域一致）。
+///
+/// 比 `visible()` 多一次 `project` 行查询（`ProjectBrief` 投影很小）。之所以不把
+/// `visible()` 改成返回所有者：知识域有大量调用方只关心 id，改签名会牵连一片。
+async fn annotation_scope(
+    state: &AppState,
+    session: &crate::auth::AuthSession,
+    project_id: &str,
+) -> Result<AnnotationScope, AppError> {
+    let is_platform_admin = session.user.role == "ADMIN";
+    let pid = visible_project_id(
+        &state.pool(),
+        project_id,
+        &session.user.user_id,
+        is_platform_admin,
+    )
+    .await?;
+    let owner_id = proj_repo::get_project_by_id_only(&state.pool(), &pid)
+        .await?
+        // 走到这里项目必然存在（visible_project_id 刚查过），缺失只能是并发删除
+        .ok_or_else(|| AppError::not_found("PROJECT_NOT_FOUND"))?
+        .user_id;
+    Ok(AnnotationScope {
+        project_id: pid,
+        owner_id,
+        is_platform_admin,
+    })
+}
+
+/// 能否改 / 删**这一条**批注：作者本人，或项目所有者 / 平台 ADMIN。
+///
+/// 前端按钮的显示依据来自 DTO 的 `canModerate`，由本函数算出 —— 权限判定只有这
+/// 一份，前后端不各写一套，避免漂移。
+fn can_moderate(
+    scope: &AnnotationScope,
+    row: &ann_repo::KnowledgeAnnotationRow,
+    user_id: &str,
+) -> bool {
+    row.created_by == user_id || scope.owns_project(user_id)
 }
 
 /// 取宿主正文（用于锚点漂移判定）。系统文档缺行时为 ""。
@@ -290,8 +354,13 @@ async fn detect_stale(
 
 // ------------------------------------------------------------------ DTO
 
-fn annotation_dto(row: &ann_repo::KnowledgeAnnotationRow) -> Value {
+/// `can_moderate` 由 [`can_moderate`] 算出并由调用方传入：编辑 / 删除按钮的显示依据。
+///
+/// 只给**人看的接口**带这个字段。Agent 侧注入块（`services/project_knowledge_annotation`
+/// 的 `summarize` / `build_block`）不带 —— 那是机器读的清单，权限位对它无意义。
+fn annotation_dto(row: &ann_repo::KnowledgeAnnotationRow, can_moderate: bool) -> Value {
     json!({
+        "canModerate": can_moderate,
         "id": row.id,
         "docRef": row.document_id.clone().unwrap_or_else(|| row.doc_kind.clone()),
         "docKind": row.doc_kind,
@@ -314,8 +383,9 @@ fn annotation_dto(row: &ann_repo::KnowledgeAnnotationRow) -> Value {
 fn pending_annotation_dto(
     row: &ann_repo::KnowledgeAnnotationRow,
     documents: &HashMap<String, (String, String)>,
+    can_moderate: bool,
 ) -> Value {
-    let mut dto = annotation_dto(row);
+    let mut dto = annotation_dto(row, can_moderate);
     let (title, strategy) = match row.doc_kind.as_str() {
         SYSTEM_CONSTITUTION => ("项目宪法", "eager"),
         SYSTEM_MEMORY => ("项目记忆", "eager"),
@@ -387,8 +457,9 @@ async fn list_pending_annotations(
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let pid = visible(&state, &session, &project_id).await?;
-    let rows = ann_repo::list_pending_annotations_for_project(&state.pool(), &pid).await?;
+    let scope = annotation_scope(&state, &session, &project_id).await?;
+    let pid = &scope.project_id;
+    let rows = ann_repo::list_pending_annotations_for_project(&state.pool(), pid).await?;
 
     let mut grouped: HashMap<(String, Option<String>), Vec<ann_repo::KnowledgeAnnotationRow>> =
         HashMap::new();
@@ -403,7 +474,7 @@ async fn list_pending_annotations(
         stale_ids.extend(
             detect_stale(
                 &state,
-                &pid,
+                pid,
                 &doc_kind,
                 document_id.as_deref(),
                 &group,
@@ -415,10 +486,10 @@ async fn list_pending_annotations(
     let rows = if stale_ids.is_empty() {
         rows
     } else {
-        ann_repo::list_pending_annotations_for_project(&state.pool(), &pid).await?
+        ann_repo::list_pending_annotations_for_project(&state.pool(), pid).await?
     };
     let documents: HashMap<String, (String, String)> =
-        ctx_repo::list_knowledge_document_nodes(&state.pool(), &pid)
+        ctx_repo::list_knowledge_document_nodes(&state.pool(), pid)
             .await?
             .into_iter()
             .map(|node| {
@@ -428,9 +499,10 @@ async fn list_pending_annotations(
                 )
             })
             .collect();
+    let user_id = &session.user.user_id;
     let items: Vec<Value> = rows
         .iter()
-        .map(|row| pending_annotation_dto(row, &documents))
+        .map(|row| pending_annotation_dto(row, &documents, can_moderate(&scope, row, user_id)))
         .collect();
     Ok(ok(json!({
         "total": items.len(),
@@ -445,21 +517,26 @@ async fn list_annotations(
     CurrentUser(session): CurrentUser,
     Path((project_id, doc_ref)): Path<(String, String)>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let pid = visible(&state, &session, &project_id).await?;
+    let scope = annotation_scope(&state, &session, &project_id).await?;
+    let pid = &scope.project_id;
     let (doc_kind, document_id) = parse_doc_ref(&doc_ref);
-    ensure_host(&state, &pid, doc_kind, document_id.as_deref()).await?;
+    ensure_host(&state, pid, doc_kind, document_id.as_deref()).await?;
 
-    let rows = ann_repo::list_annotations(&state.pool(), &pid, doc_kind, document_id.as_deref()).await?;
-    let stale_ids = detect_stale(&state, &pid, doc_kind, document_id.as_deref(), &rows).await?;
+    let rows = ann_repo::list_annotations(&state.pool(), pid, doc_kind, document_id.as_deref()).await?;
+    let stale_ids = detect_stale(&state, pid, doc_kind, document_id.as_deref(), &rows).await?;
 
     // 置 stale 后重新取一次，保证返回的就是落库后的真实状态
     let rows = if stale_ids.is_empty() {
         rows
     } else {
-        ann_repo::list_annotations(&state.pool(), &pid, doc_kind, document_id.as_deref()).await?
+        ann_repo::list_annotations(&state.pool(), pid, doc_kind, document_id.as_deref()).await?
     };
 
-    let items: Vec<Value> = rows.iter().map(annotation_dto).collect();
+    let user_id = &session.user.user_id;
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|row| annotation_dto(row, can_moderate(&scope, row, user_id)))
+        .collect();
     Ok(ok(json!({
         "annotations": items,
         STALE_DETECTED_KEY: stale_ids,
@@ -473,9 +550,10 @@ async fn create_annotation(
     Path((project_id, doc_ref)): Path<(String, String)>,
     ValidatedJson(body): ValidatedJson<CreateAnnotationBody>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let pid = visible(&state, &session, &project_id).await?;
+    let scope = annotation_scope(&state, &session, &project_id).await?;
+    let pid = &scope.project_id;
     let (doc_kind, document_id) = parse_doc_ref(&doc_ref);
-    ensure_host(&state, &pid, doc_kind, document_id.as_deref()).await?;
+    ensure_host(&state, pid, doc_kind, document_id.as_deref()).await?;
 
     let text = required_string("body", &body.body, BODY_MIN, BODY_MAX)?;
     if text.trim().is_empty() {
@@ -490,7 +568,7 @@ async fn create_annotation(
 
     let row = ann_repo::create_annotation(
         &state.pool(),
-        &pid,
+        pid,
         doc_kind,
         document_id.as_deref(),
         anchor_text.as_deref(),
@@ -500,20 +578,25 @@ async fn create_annotation(
         &session.user.user_id,
     )
     .await?;
-    Ok(ok(annotation_dto(&row)))
+    // 刚建的批注作者恒为自己 → canModerate 必为 true，走同一判定保持口径一致
+    Ok(ok(annotation_dto(
+        &row,
+        can_moderate(&scope, &row, &session.user.user_id),
+    )))
 }
 
 /// `PATCH /projects/:id/knowledge/annotations/:annotationId`
 ///
-/// 两条路径的权限不同（见模块头注释）：改 `body` 要作者，迁 `status` 所有成员可用。
+/// 两条路径的权限不同（见模块头注释）：改 `body` 要作者或项目所有者，
+/// 迁 `status`（结案 / 重开）所有成员可用。
 async fn patch_annotation(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path((project_id, annotation_id)): Path<(String, String)>,
     ValidatedJson(body): ValidatedJson<PatchAnnotationBody>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let pid = visible(&state, &session, &project_id).await?;
-    let existing = ann_repo::find_annotation(&state.pool(), &pid, &annotation_id)
+    let scope = annotation_scope(&state, &session, &project_id).await?;
+    let existing = ann_repo::find_annotation(&state.pool(), &scope.project_id, &annotation_id)
         .await?
         .ok_or_else(|| AppError::not_found("ANNOTATION_NOT_FOUND"))?;
 
@@ -522,10 +605,10 @@ async fn patch_annotation(
     let new_outcome = optional_enum("outcome", &body.outcome, OUTCOMES)?;
     let new_note = optional_string("resolvedNote", &body.resolved_note, 0, NOTE_MAX)?;
 
-    // 改正文 = 编辑自己的批注 → 作者限定
-    if new_body.is_some() && existing.created_by != session.user.user_id {
+    // 改正文 = 作者本人，或项目所有者 / 平台 ADMIN 代改（治理他人批注）
+    if new_body.is_some() && !can_moderate(&scope, &existing, &session.user.user_id) {
         return Err(AppError::forbidden("ANNOTATION_FORBIDDEN")
-            .with_message("只有作者可以编辑批注"));
+            .with_message("只有作者或项目所有者可以编辑批注"));
     }
 
     let status_change = match new_status.as_deref() {
@@ -558,22 +641,26 @@ async fn patch_annotation(
         status_change,
     )
     .await?;
-    Ok(ok(annotation_dto(&row)))
+    // 权限不变：授权到这条批注，改完仍是同一批注、同一批人可动
+    Ok(ok(annotation_dto(
+        &row,
+        can_moderate(&scope, &existing, &session.user.user_id),
+    )))
 }
 
-/// `DELETE /projects/:id/knowledge/annotations/:annotationId`（仅作者）
+/// `DELETE /projects/:id/knowledge/annotations/:annotationId`（作者或项目所有者）
 async fn delete_annotation(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path((project_id, annotation_id)): Path<(String, String)>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let pid = visible(&state, &session, &project_id).await?;
-    let existing = ann_repo::find_annotation(&state.pool(), &pid, &annotation_id)
+    let scope = annotation_scope(&state, &session, &project_id).await?;
+    let existing = ann_repo::find_annotation(&state.pool(), &scope.project_id, &annotation_id)
         .await?
         .ok_or_else(|| AppError::not_found("ANNOTATION_NOT_FOUND"))?;
-    if existing.created_by != session.user.user_id {
+    if !can_moderate(&scope, &existing, &session.user.user_id) {
         return Err(AppError::forbidden("ANNOTATION_FORBIDDEN")
-            .with_message("只有作者可以删除批注"));
+            .with_message("只有作者或项目所有者可以删除批注"));
     }
     ann_repo::delete_annotation(&state.pool(), &annotation_id).await?;
     Ok(ok(json!({ "id": annotation_id })))
@@ -648,6 +735,70 @@ mod tests {
     fn empty_anchor_means_document_level() {
         assert!(anchor_resolvable("随便什么正文", ""));
         assert!(anchor_resolvable("随便什么正文", "   "));
+    }
+
+    fn row_created_by(created_by: &str) -> ann_repo::KnowledgeAnnotationRow {
+        ann_repo::KnowledgeAnnotationRow {
+            id: "a1".into(),
+            project_id: "p1".into(),
+            doc_kind: "document".into(),
+            document_id: Some("d1".into()),
+            anchor_text: None,
+            anchor_prefix: None,
+            anchor_suffix: None,
+            body: "改一下".into(),
+            status: "open".into(),
+            outcome: None,
+            resolved_note: None,
+            resolved_by: None,
+            resolved_at: None,
+            created_by: created_by.into(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    fn scope(owner_id: &str, is_platform_admin: bool) -> AnnotationScope {
+        AnnotationScope {
+            project_id: "p1".into(),
+            owner_id: owner_id.into(),
+            is_platform_admin,
+        }
+    }
+
+    #[test]
+    fn author_can_moderate_own_annotation() {
+        let ann = row_created_by("u_author");
+        // 普通成员不是所有者，但作者身份足以改删
+        assert!(can_moderate(&scope("u_owner", false), &ann, "u_author"));
+    }
+
+    #[test]
+    fn project_owner_can_moderate_others_annotation() {
+        let ann = row_created_by("u_author");
+        assert!(can_moderate(&scope("u_owner", false), &ann, "u_owner"));
+    }
+
+    #[test]
+    fn platform_admin_can_moderate_any_annotation() {
+        let ann = row_created_by("u_author");
+        // owner_id 与 admin 不同：平台 ADMIN 不落库，靠 is_platform_admin 通道放行
+        assert!(can_moderate(&scope("u_owner", true), &ann, "u_admin"));
+    }
+
+    #[test]
+    fn plain_member_cannot_moderate_others_annotation() {
+        let ann = row_created_by("u_author");
+        assert!(!can_moderate(&scope("u_owner", false), &ann, "u_other"));
+    }
+
+    #[test]
+    fn dto_exposes_moderation_flag() {
+        let ann = row_created_by("u_author");
+        assert_eq!(annotation_dto(&ann, true)["canModerate"], json!(true));
+        assert_eq!(annotation_dto(&ann, false)["canModerate"], json!(false));
+        // 原有字段不受影响
+        assert_eq!(annotation_dto(&ann, true)["createdBy"], json!("u_author"));
     }
 
     #[test]

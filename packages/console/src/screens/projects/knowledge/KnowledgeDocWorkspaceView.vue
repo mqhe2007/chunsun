@@ -14,7 +14,6 @@ import {
   selectionToolbarPlacement,
   type SelectionToolbarPlacement,
 } from "@/utils/selectionToolbar";
-import { useAuthStore } from "@/stores/auth";
 import { api } from "@/utils/api";
 import { collectDescendantKeys, visibleKnowledgeRows } from "@/utils/knowledgeTree";
 import { renderMarkdown } from "@/utils/markdown";
@@ -86,7 +85,6 @@ const previewHtml = computed(() => renderMarkdown(content.value));
 
 // ---- 批注（需求 u-WPvdvYh4Fw：方案甲第三栏 + 内联高亮 + 选项 B 结案）----
 
-const authStore = useAuthStore();
 const {
   annotations: annList,
   loading: annLoading,
@@ -678,7 +676,6 @@ onBeforeUnmount(() => {
               <KnowledgeAnnotationPanel
                 :annotations="annList"
                 :loading="annLoading"
-                :current-user-id="authStore.userId"
                 :active-id="annActiveId"
                 @edit="onEditAnnotation"
                 @resolve="onResolveAnnotation"
@@ -695,7 +692,6 @@ onBeforeUnmount(() => {
             <KnowledgeAnnotationPanel
               :annotations="annList"
               :loading="annLoading"
-              :current-user-id="authStore.userId"
               :active-id="annActiveId"
               @edit="onEditAnnotation"
               @resolve="onResolveAnnotation"
