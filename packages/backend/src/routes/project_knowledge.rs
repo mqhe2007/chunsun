@@ -38,7 +38,9 @@ use crate::repos::project_knowledge as ctx_repo;
 use crate::repos::project_env_var::count_env_vars_by_project;
 use crate::repos::requirement::count_requirements_by_status;
 use crate::routes::dto::{constitution_dto, knowledge_doc_dto};
-use crate::routes::validate::{optional_number, optional_string, required_string};
+use crate::routes::validate::{
+    optional_number, optional_string, required_revision, required_string,
+};
 use crate::services::project_knowledge_annotation as ann_service;
 use crate::services::project_access::visible_project_id;
 use crate::services::project_knowledge::list_project_knowledge;
@@ -55,6 +57,12 @@ const CONTENT_MAX: usize = usize::MAX;
 pub struct ConstitutionBody {
     #[serde(default, deserialize_with = "double_option")]
     pub content: Option<Option<String>>,
+    /// 乐观锁版本号。**必填**——`0` 表示「我认为宪法还不存在」。
+    ///
+    /// 刻意不用 `double_option`：版本号的「缺省」与「显式 null」是同一种意思
+    /// （没说清基于哪一版），没有第三态，见 [`required_revision`]。
+    #[serde(default)]
+    pub revision: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +93,9 @@ pub struct UpdateKnowledgeBody {
     /// 双层语义：不传 = 不改；null / 空串 = 解除关联（回到根）
     #[serde(default, deserialize_with = "double_option")]
     pub parent_id: Option<Option<String>>,
+    /// 乐观锁版本号。**必填**，见 [`required_revision`]。
+    #[serde(default)]
+    pub revision: Option<i32>,
 }
 
 /// `GET /knowledge/documents?strategy=eager|lazy` 的 query 参数
@@ -191,6 +202,11 @@ async fn get_knowledge_doc(
                 .unwrap_or(""),
             "system": true,
             "loadStrategy": "eager",
+            // 缺行时给 0：与「首次写入传 revision = 0」的语义对齐
+            // （`upsert_project_memory` 的 `expected_revision = 0` 表示调用方
+            // 认为这行还不存在）。若这里给 null，Console 就得自己判空再补 0，
+            // 那个分支迟早会被漏掉，而漏掉的表现是写不进去。
+            "revision": memory.as_ref().map_or_else(absent_row_revision, |row| row.revision),
             "updatedAt": memory.as_ref().map(|row| dt_value(&row.updated_at)),
             "breadcrumb": [],
             "children": [],
@@ -269,11 +285,46 @@ async fn put_constitution(
     // 旧后端顺序相反（先查项目再校验 body），但两者只在「项目不可见 + body 非法」
     // 同时成立时才有差别，此时旧后端 404 / 新后端 422。对拍脚本避开该组合。
     let content = required_string("content", &body.content, CONTENT_MIN, CONTENT_MAX)?;
-    let policy = ctx_repo::upsert_project_policy(&state.pool(), &pid, content).await?;
-    Ok(ok(constitution_dto(
-        &policy.constitution_md,
-        &policy.updated_at,
-    )))
+    // 版本校验在 body 校验之后、写库之前：先确认「补丁本身合法」，
+    // 再确认「你知道自己基于哪一版」。顺序反过来的话，缺版本的请求会先拿到 400，
+    // 而 body 里可能还藏着个 422 —— 一次性把所有 body 问题暴露出来更有用。
+    let expected = required_revision("revision", body.revision)?;
+    let policy = ctx_repo::upsert_project_policy(&state.pool(), &pid, content, expected).await?;
+
+    match policy {
+        ctx_repo::WriteOutcome::Ok(row) => Ok(ok(constitution_dto(&row))),
+        // 行不存在且调用方声称的版本不是 0：调用方基于一个不存在的版本在写。
+        // 归到 409 而不是 404 —— 宪法是项目的一部分，项目本身可见，
+        // 「宪法行还没建」不是「资源不存在」，而是「你拿的版本号是错的」。
+        ctx_repo::WriteOutcome::NotFound => Err(constitution_conflict(&pid, expected, None)),
+        ctx_repo::WriteOutcome::Conflict(current) => {
+            Err(constitution_conflict(&pid, expected, Some(&current)))
+        }
+    }
+}
+
+/// 409 `CONSTITUTION_CONFLICT`：附上当前版本号与当前正文，Agent 据此合并重试。
+///
+/// `current` 为 `None` 时（`NotFound` 分支）只给版本号：那种情况下没有「当前正文」
+/// 可言，硬塞一个空串会让 Agent 以为宪法被清空了。
+fn constitution_conflict(
+    project_id: &str,
+    your_revision: i32,
+    current: Option<&ctx_repo::ProjectPolicyRow>,
+) -> AppError {
+    let mut data = json!({
+        "projectId": project_id,
+        "yourRevision": your_revision,
+        "currentRevision": current.map(|c| c.revision).unwrap_or(0),
+    });
+    if let Some(row) = current {
+        data["currentContent"] = Value::String(row.constitution_md.clone());
+        data["updatedAt"] = dt_value(&row.updated_at);
+    }
+    AppError::conflict("CONSTITUTION_CONFLICT")
+        .with_message("项目宪法已被他人修改")
+        .with_hint("用 currentContent 合并你的改动，revision 取 currentRevision 后重试")
+        .with_data(data)
 }
 
 async fn create_knowledge(
@@ -333,6 +384,25 @@ async fn update_knowledge(
     let content = optional_string("content", &body.content, CONTENT_MIN, CONTENT_MAX)?;
     let sort_order = optional_number("sortOrder", &body.sort_order)?;
     let load_strategy = optional_string("loadStrategy", &body.load_strategy, 0, 16)?;
+    let expected = required_revision("revision", body.revision)?;
+
+    // 空补丁一律 400。**这条路径原先是仓储层的提前返回**（复刻 Prisma 空 `data`
+    // 退化成纯读、不刷 `updated_at` 的行为），现在拦在 handler：
+    // 带版本号的空 PUT 是「我读过这一版但什么也不改」，没有意义；
+    // 不带版本号的空 PUT 更是没意义。统一 400，不再有例外。
+    //
+    // 判空要连 `parent_id` 一起看：`Some(None)` 是「解除父关联」，是一次真实写入，
+    // 而 `None` 才是「不改」。只看前四个字段会把解绑请求误判成空补丁。
+    let is_empty_patch = title.is_none()
+        && content.is_none()
+        && sort_order.is_none()
+        && load_strategy.is_none()
+        && body.parent_id.is_none();
+    if is_empty_patch {
+        return Err(AppError::bad_request("EMPTY_PATCH")
+            .with_message("请求体里没有任何要修改的字段")
+            .with_hint("至少提供 title / content / sortOrder / loadStrategy / parentId 之一"));
+    }
 
     // 校验 loadStrategy 值
     if let Some(ls) = load_strategy {
@@ -361,15 +431,24 @@ async fn update_knowledge(
         None => None,
     };
 
-    // 存在性检查用 (id, projectId) 双条件，跨项目取不到别人的文档
-    let existing = ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id).await?;
-    let Some(existing) = existing else {
+    // 存在性检查用 (id, projectId) 双条件，跨项目取不到别人的文档。
+    // **保留这次预读**：它能区分「这个 docId 根本不属于你的项目」与「版本号不对」，
+    // 前者是 404 后者是 409。仓储层的条件 UPDATE 只看 `id`，落空后重查也只按 id，
+    // 分不出跨项目这一层——所以这个 404 必须在这里判。
+    //
+    // 只判存在性、不要行本身：版本号以**客户端传来的**为准，拿库里的行去覆盖它
+    // 等于把乐观锁退化成「永远匹配」。
+    if ctx_repo::find_knowledge_document(&state.pool(), &pid, &doc_id)
+        .await?
+        .is_none()
+    {
         return Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND"));
-    };
+    }
 
     let doc = ctx_repo::update_knowledge_document(
         &state.pool(),
-        &existing,
+        &doc_id,
+        expected,
         title,
         content,
         sort_order,
@@ -377,7 +456,44 @@ async fn update_knowledge(
         parent_update.as_ref().map(|o| o.as_deref()),
     )
     .await?;
-    Ok(ok(knowledge_doc_dto(&doc)))
+
+    match doc {
+        ctx_repo::WriteOutcome::Ok(row) => Ok(ok(knowledge_doc_dto(&row))),
+        // 走到这里说明上面的预读查到了、条件 UPDATE 却落空且重查也查不到 ——
+        // 只可能是两次查询之间有人把文档删了。报 404 而不是 409：
+        // 版本冲突的前提是「行还在、只是变了」。
+        ctx_repo::WriteOutcome::NotFound => Err(AppError::not_found("CONTEXT_DOC_NOT_FOUND")),
+        ctx_repo::WriteOutcome::Conflict(current) => {
+            Err(knowledge_doc_conflict(&doc_id, expected, &current))
+        }
+    }
+}
+
+/// 409 `KNOWLEDGE_DOC_CONFLICT`：把当前正文整篇带回去，Agent 就地合并、改完重试。
+///
+/// **为什么整篇返回**：`CONTENT_MAX` 是 `usize::MAX`（旧后端是裸 `t.String()`），
+/// 大文档确实可能几万字号。权衡后仍然全给——409 是罕见事件，一次大响应换掉
+/// Agent「收到 409 → 再发一次 GET → 再合并」的整轮往返，对自动化更划算；
+/// 且少一次往返就少一个「合并时又被改了」的窗口。
+///
+/// 客户端要拿全文必须走 `--json` 或 `ApiError::body()`：CLI 的人读输出只印摘要，
+/// 见 `parse_error_detail` 的既有契约。
+fn knowledge_doc_conflict(
+    doc_id: &str,
+    your_revision: i32,
+    current: &ctx_repo::KnowledgeDocRow,
+) -> AppError {
+    AppError::conflict("KNOWLEDGE_DOC_CONFLICT")
+        .with_message("文档已被他人修改，你的写入未生效")
+        .with_hint("用 currentContent 合并你的改动，revision 取 currentRevision 后重试")
+        .with_data(json!({
+            "docId": doc_id,
+            "yourRevision": your_revision,
+            "currentRevision": current.revision,
+            "currentTitle": current.title,
+            "currentContent": current.content,
+            "updatedAt": dt_value(&current.updated_at),
+        }))
 }
 
 async fn delete_knowledge(
@@ -556,6 +672,10 @@ async fn get_constitution(
         "content": constitution,
         "system": true,
         "loadStrategy": "eager",
+        // 宪法行尚未建立时给 0（= 调用方可以创建），建立了才给真实版本。
+        // 为什么不复用 `constitution_dto`：那条形状少一个 `loadStrategy`，
+        // 而 GET 与 PUT 的响应在 Console 里走同一个 `applyDoc`。
+        "revision": policy.as_ref().map_or_else(absent_row_revision, |p| p.revision),
         "updatedAt": updated_at.map(|t| dt_value(&t)),
     });
     // 单篇形态 → 批注全量（宪法是 Agent 每次启动必读的，批注直接影响执行策略）
@@ -592,9 +712,33 @@ pub fn router(state: AppState) -> Router<AppState> {
         ))
 }
 
+/// 系统行（宪法 / 项目记忆）不存在时下发的版本号。
+///
+/// 必须是 **0**，不能是 `null` 或 `1`：
+/// - 0 是「我认为这行还不存在」的写入意图，`upsert_project_policy` /
+///   `upsert_project_memory` 的 `expected_revision = 0` 分支据此走 INSERT；
+/// - 若给 `null`，客户端带版本写回时要自己判空补 0，漏掉就写不进去；
+/// - 若给 1，客户端会带着「库里有第一版」的错觉去写，落空成 409 ——
+///   一个凭空造出来的冲突，用户无从理解（他明明是从这个接口读的版本）。
+fn absent_row_revision() -> i32 {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 空行的版本号必须能被写路径接受：这是「首次写宪法 / 首次写项目记忆」
+    /// 这条链路的接缝——读侧给 0、写侧认 0，两边一旦不一致，
+    /// 表现是新建项目后第一次保存永远失败。
+    #[test]
+    fn absent_system_row_reports_revision_zero() {
+        assert_eq!(absent_row_revision(), 0);
+        assert!(
+            crate::repos::project_knowledge::revision_matches(absent_row_revision(), 0),
+            "读侧下发的缺行版本号必须能通过「行不存在」的写侧判定"
+        );
+    }
 
     #[test]
     fn by_status_is_empty_object_when_no_requirements() {

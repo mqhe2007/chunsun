@@ -28,8 +28,9 @@ use crate::repos::harness::{
     delete_case_by_id, delete_scenario_by_id, get_case_by_id, get_memory, get_run_by_id,
     list_cases_by_requirement, list_runs_by_requirement, list_scenarios as repo_list_scenarios,
     list_steps_by_run, reset_requirement, set_case_status, set_run_status, set_scenario_status,
-    takeover_running_run, upsert_case, upsert_memory, upsert_scenario,
+    takeover_and_create_run, upsert_case, upsert_memory, upsert_scenario,
 };
+use crate::repos::project_knowledge::WriteOutcome;
 use crate::repos::project::get_project_by_id;
 use crate::repos::requirement::get_requirement_by_id;
 use crate::services::notification::{
@@ -107,6 +108,9 @@ struct StepBody {
 struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
     snapshot: Option<Option<String>>,
+    /// 乐观锁版本号。**必填**——`0` 表示「我认为该需求记忆还不存在」。
+    #[serde(default)]
+    revision: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,16 +309,27 @@ async fn create_run_handler(
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
-    // 撞锁：已有 running 的 Run → 409
+    // 撞锁预检查：**保留**，但已不再是唯一防线。
+    //
+    // 它值得留是因为它给得出 `runId` 与 `lastActiveAt` —— 这两样只有先读到具体
+    // 那行 running 才有，而数据库层的唯一索引只知道「撞了」。常见路径（不是并发）
+    // 走这里，退化的信息量明显更好。
+    //
+    // 真正兜底在 `repo_create_run`：两个请求同一刻穿过这次预检查时，
+    // 唯一索引会把后到的那个变成 23505，由仓储层转成同码 409（data 里没有 runId）。
+    //
+    // `index` 一并给出去：CLI 现在为了打印 `#N` 要额外发一次 list_runs，
+    // 而这里已经拿到了那一行，顺带省掉一次往返。
     let existing = list_runs_by_requirement(&state.pool(), &p.requirement_id, &p.project_id).await?;
-    if existing.iter().any(|r| r.status == "running") {
-        let running = existing.iter().find(|r| r.status == "running").unwrap();
+    if let Some(running) = existing.iter().find(|r| r.status == "running") {
         return Err(AppError::conflict("RUN_ALREADY_RUNNING")
             .with_hint("该需求已有 Run 在跑；如需接管（僵尸 Run 人工接管），请调用 takeover 端点")
             .with_data(json!({
-            "runId": running.id,
-            "lastActiveAt": running.updated_at,
-        })));
+                "requirementId": p.requirement_id,
+                "runId": running.id,
+                "index": running.index,
+                "lastActiveAt": running.updated_at,
+            })));
     }
     let run = repo_create_run(&state.pool(), &p.requirement_id, &p.project_id).await?;
     Ok(created_val(run_dto(&run)))
@@ -327,8 +342,13 @@ async fn takeover_run(
 ) -> Result<(StatusCode, Json<ApiResponse<Value>>), AppError> {
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
-    let taken = takeover_running_run(&state.pool(), &p.requirement_id, &p.project_id).await?;
-    let run = repo_create_run(&state.pool(), &p.requirement_id, &p.project_id).await?;
+    // 接管 + 开新 Run **必须在同一事务里**，不能拆成两次调用：
+    // 拆开会在「已接管、尚未插入」之间留一个空窗，此时若另一个请求也来接管，
+    // 它会读到「没有 running」从而直接开新 Run —— 对一个明确要求接管的调用方来说，
+    // 那不是它要的答案（虽然唯一索引还能拦住最终的两条 running）。
+    // 详见 `takeover_and_create_run` 的注释。
+    let (taken, run) =
+        takeover_and_create_run(&state.pool(), &p.requirement_id, &p.project_id).await?;
     Ok(created_val(json!({
         "run": run_dto(&run),
         "takenOver": taken.as_ref().map(run_dto),
@@ -500,8 +520,49 @@ async fn put_memory(
     check_project(&state, &p.project_id, &session).await?;
     check_requirement(&state, &p.requirement_id, &p.project_id).await?;
     let snapshot = validate_memory_snapshot(&body.snapshot)?;
-    let ctx = upsert_memory(&state.pool(), &p.requirement_id, &p.project_id, Some(snapshot)).await?;
-    Ok(ok_val(memory_dto(&ctx)))
+    let expected = crate::routes::validate::required_revision("revision", body.revision)?;
+    let outcome = upsert_memory(
+        &state.pool(),
+        &p.requirement_id,
+        &p.project_id,
+        snapshot,
+        expected,
+    )
+    .await?;
+
+    match outcome {
+        WriteOutcome::Ok(row) => Ok(ok_val(memory_dto(&row))),
+        // 记忆行不存在且调用方声称的版本不是 0：与项目记忆同理，
+        // 「记忆还没建」不是资源不存在，是调用方拿的版本号不自洽 → 409。
+        WriteOutcome::NotFound => Err(memory_conflict(&p, expected, None)),
+        WriteOutcome::Conflict(current) => Err(memory_conflict(&p, expected, Some(&current))),
+    }
+}
+
+/// 409 `MEMORY_CONFLICT`（需求级）。
+///
+/// 与项目记忆的 409 分开命名，因为**撞的约束不同**、恢复动作也不同：
+/// 需求记忆按 `requirementId` 定位，并行跑同一需求下不同需求的多轮会话时，
+/// Agent 需要知道是哪个需求撞了。
+fn memory_conflict(
+    p: &ReqParams,
+    your_revision: i32,
+    current: Option<&crate::repos::harness::MemoryRow>,
+) -> AppError {
+    let mut data = json!({
+        "requirementId": p.requirement_id,
+        "projectId": p.project_id,
+        "yourRevision": your_revision,
+        "currentRevision": current.map(|c| c.revision).unwrap_or(0),
+    });
+    if let Some(row) = current {
+        data["currentSnapshot"] = json!(row.snapshot);
+        data["updatedAt"] = json!(row.updated_at);
+    }
+    AppError::conflict("MEMORY_CONFLICT")
+        .with_message("需求工作记忆已被他人修改")
+        .with_hint("用 currentSnapshot 合并你的改动，revision 取 currentRevision 后重试")
+        .with_data(data)
 }
 
 // ---------- reset ----------

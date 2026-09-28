@@ -44,16 +44,16 @@ chunsun case status <需求ID> <用例ID> <passed|failed|blocked|skipped> [--res
 ```bash
 chunsun knowledge [--json]                                      # 项目知识概览（宪法+自定义文档+需求/环境变量统计；树形缩进展示主文档/分册）
 chunsun knowledge index [--json]                                # 知识目录：树形展示（主文档标注 N 分册），元信息含 parentId/depth
-chunsun knowledge doc <文档ID|constitution|memory> [--json]      # 单条查询：面包屑（所属主文档链）+ 子文档清单 + 正文/批注
+chunsun knowledge doc <文档ID|constitution|memory> [--json]      # 单条查询：面包屑（所属主文档链）+ 子文档清单 + 正文/批注；输出含 revision（写回用）
 chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy] [--parent <主文档ID>]  # 创建知识文档（保持不支持删除）
-chunsun knowledge update <文档ID|constitution|memory> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>] [--parent <主文档ID|空串=解除>]  # 系统文档只允许 --content
+chunsun knowledge update <文档ID|constitution|memory> --revision <N> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>] [--parent <主文档ID|空串=解除>]  # 系统文档只允许 --content；--revision 必填
 chunsun knowledge annotation list [--json]                       # 全项目待处理批注（open + stale，覆盖 eager/lazy）
 chunsun knowledge annotation resolve <批注ID> --outcome addressed|dismissed --note '<依据>' [--json]
 chunsun knowledge annotation reopen <批注ID> [--json]
 chunsun requirement memory get <需求ID>                          # 拉取需求工作记忆
-chunsun requirement memory put <需求ID> --snapshot '<Markdown>'  # 全量覆盖写回需求工作记忆（≤10k 字符）
+chunsun requirement memory put <需求ID> --revision <N> --snapshot '<Markdown>'  # 全量覆盖写回需求工作记忆（≤10k 字符）；--revision 必填，无记忆时传 0
 chunsun memory get [--json]                                     # 拉取项目级记忆（跨需求填坑/经验，无则友好提示）
-chunsun memory put --snapshot '<Markdown>' [--json]             # 全量覆盖写回项目级记忆（≤10k 字符，仅可编辑不可删除）
+chunsun memory put --revision <N> --snapshot '<Markdown>' [--json]  # 全量覆盖写回项目级记忆（≤10k 字符）；--revision 必填，无记忆时传 0
 chunsun reset <需求ID>                                           # 全量重置：清工作记忆（保留澄清边界）+ 场景/用例重置 pending + 开新 Run
 chunsun fix <缺陷ID>                                             # 派生唯一修复需求（缺陷 1:1）并启动自主交付
 ```

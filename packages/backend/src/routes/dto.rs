@@ -12,7 +12,7 @@ use crate::core::env_var_crypto::env_var_has_stored_value;
 use crate::repos::defect::DefectRow;
 use crate::repos::project::ProjectRow;
 use crate::repos::project_activity::ProjectActivityRow;
-use crate::repos::project_knowledge::KnowledgeDocRow;
+use crate::repos::project_knowledge::{KnowledgeDocRow, ProjectPolicyRow};
 use crate::repos::project_env_var::ProjectEnvVarRow;
 use crate::repos::prompt::PromptRow;
 use crate::repos::repository::RepositoryRow;
@@ -174,6 +174,10 @@ pub fn activity_dto(a: &ProjectActivityRow) -> Value {
 /// `serializeContextDocument`：**不含 `createdAt`**，只回 `updatedAt`。
 ///
 /// 排序用的 `createdAt` 只在列表 `ORDER BY` 里出现，不外泄到响应里。
+///
+/// `revision` 是**新增字段**（旧后端没有）：乐观锁的版本载体。客户端读到它、
+/// 写回它，写失败时拿到的 409 里带当前值。增量字段，旧消费方忽略即可——
+/// 但**写请求**必须带，否则 400（见 `routes::validate::required_revision`）。
 pub fn knowledge_doc_dto(d: &KnowledgeDocRow) -> Value {
     json!({
         "id": d.id,
@@ -182,19 +186,25 @@ pub fn knowledge_doc_dto(d: &KnowledgeDocRow) -> Value {
         "sortOrder": d.sort_order,
         "loadStrategy": d.load_strategy,
         "parentId": d.parent_id,
+        "revision": d.revision,
         "updatedAt": dt_value(&d.updated_at),
     })
 }
 
 /// `PUT /contexts/constitution` 的响应：形状**不同于**列表里的宪法条目——
 /// 多一个 `updatedAt`，因为这里拿得到 `project_policy` 行。
-pub fn constitution_dto(constitution_md: &str, updated_at: &chrono::DateTime<chrono::Utc>) -> Value {
+///
+/// 入参从 `(&str, &DateTime)` 扩成整行：`revision` 是新增的必读字段，
+/// 逐字段拆参数会在下次加列时再改一遍签名。`ProjectPolicyRow` 的形状就是
+/// `POLICY_COLS` 的投影，两者同源。
+pub fn constitution_dto(policy: &ProjectPolicyRow) -> Value {
     json!({
         "key": "constitution",
         "title": "项目宪法",
-        "content": constitution_md,
+        "content": policy.constitution_md,
         "system": true,
-        "updatedAt": dt_value(updated_at),
+        "revision": policy.revision,
+        "updatedAt": dt_value(&policy.updated_at),
     })
 }
 

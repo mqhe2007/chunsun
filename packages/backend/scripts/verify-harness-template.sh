@@ -69,12 +69,14 @@ assert body.get("success") is True, body
 data = body.get("data") or {}
 version = data.get("templateVersion")
 files = data.get("files") or {}
+# 键名与 backend/src/harness_template.rs 的 template_files() 一一对应。
+# 2026-09-08 起斜线命令模板已并入技能，不再单独下发（harness_template.rs 的
+# payload_no_longer_serves_slash_templates 断言它们**不应**出现），
+# 这里若继续要求 slash/* 只会必然 FAIL。
 required = [
     "SKILL.md",
     "loop-rules.md",
     "commands.md",
-    "slash/chunsun.md",
-    "slash/chunsun-fix.md",
 ]
 missing = [k for k in required if not isinstance(files.get(k), str) or not files[k].strip()]
 if missing:

@@ -120,6 +120,42 @@ pub fn optional_number(field: &str, value: &Option<Option<f64>>) -> Result<Optio
     }
 }
 
+/// 乐观锁版本号：**必填正整数**，缺失 / null / 负数 / 非整数一律 400 `MISSING_REVISION`。
+///
+/// 与上面几个校验器的三个不同，都不是随手定的：
+///
+/// 1. **状态码是 400 而不是 422**。422 在这里会让 Agent 误以为「请求体形状不对，改改再发」，
+///    而缺版本号的真实含义是「你还没读过这行」——补救动作是**先去读一次**，不是改 body。
+///    用 400 把它和 schema 层面（TypeBox 语义）的 422 分开。
+/// 2. **不配 `double_option`**。`Option<Option<i32>>` 的三态是为了区分「不提供」与「显式清空」，
+///    而版本号没有「清空」语义：`null` 与缺省的下场完全相同（都是没告诉我你基于哪一版），
+///    多一层反而要在这里把 `Some(None)` 重新折叠回 `None`。直接 `Option<i32>`，
+///    但**必须**配 `#[serde(default)]`，否则字段缺失时 serde 报错落 422。
+///
+/// 类型是 `i32` 而非 `i64`：`revision` 列在库里是 `INTEGER`（INT4），sqlx 的
+/// `FromRow` 按类型严格解码，`i64` 会在**运行时**报
+/// `mismatched types; Rust type i64 (as SQL type INT8) is not compatible with SQL type INT4`
+/// —— 单元测试碰不到真列，编译期也拦不住。仓库里其余整数列（`sort_order`、`index`）
+/// 也都是 `INTEGER` ↔ `i32`，这里对齐同一惯例。
+/// 3. **不做「缺失时自动拉取当前版本」的兜底**。那次读与本次写之间的窗口正是要防的竞态，
+///    自动补等于把保护拆掉（方案里已定：Agent 必须先显式读一次）。
+///
+/// `0` 是合法值，表示「我认为这行还不存在」——首次写宪法 / 首次写某需求记忆时用它。
+/// 负数没有对应语义，直接拒。
+pub fn required_revision(field: &str, value: Option<i32>) -> Result<i32, AppError> {
+    let Some(n) = value else {
+        return Err(AppError::bad_request("MISSING_REVISION")
+            .with_message(format!("{field} 为必填项：请先读取一次拿到当前版本号再写"))
+            .with_hint("首次创建传 0；更新传你读到的那一版"));
+    };
+    if n < 0 {
+        return Err(AppError::bad_request("MISSING_REVISION")
+            .with_message(format!("{field} 不能为负数"))
+            .with_hint("首次创建传 0；更新传你读到的那一版"));
+    }
+    Ok(n)
+}
+
 /// `t.Optional(t.Union([t.Literal("a"), t.Literal("b"), …]))`：缺省放行，
 /// null 与不在白名单里的值都 422。
 ///
@@ -157,6 +193,36 @@ mod tests {
     }
     fn value(s: &str) -> Option<Option<String>> {
         Some(Some(s.to_string()))
+    }
+
+    /// 版本号的四态：缺省 / null / 负数全部 400，只有非负整数放行。
+    ///
+    /// 两条断言值得单独说：
+    /// - **`null` 与缺省同下场**。这是它不用 `double_option` 的直接后果，
+    ///   也是刻意的：JSON 客户端传 `"revision": null` 与不传，表达的都是
+    ///   「我说不清基于哪一版」，没有第三种解释。
+    /// - **`0` 放行**。`0` 不是「没有版本号」，是「我认为这行还不存在」，
+    ///   首次建宪法 / 首次写记忆时的合法值。把 `0` 当 falsy 拒掉会让首次创建永远写不进去。
+    #[test]
+    fn required_revision_rejects_missing_null_and_negative_but_allows_zero() {
+        let err = required_revision("revision", None).expect_err("缺省必须 400");
+        assert_eq!(err.code, "MISSING_REVISION");
+
+        // 显式 null 走到校验器时已经是 None：`Option<i32>` 没配 `double_option`，
+        // serde 把 `"revision": null` 与字段缺失折叠成同一个值。
+        // 这里从 JSON 侧验一遍，确认折叠确实发生（而不是靠 `None` 手动构造蒙混过关）。
+        let from_null: Option<i32> = serde_json::from_str(r#"{"revision": null}"#)
+            .map(|v: serde_json::Value| v.get("revision").and_then(|r| r.as_i64()))
+            .unwrap()
+            .map(|n| n as i32);
+        let err = required_revision("revision", from_null).expect_err("null 同样 400");
+        assert_eq!(err.code, "MISSING_REVISION");
+
+        let err = required_revision("revision", Some(-1)).expect_err("负数必须 400");
+        assert_eq!(err.code, "MISSING_REVISION");
+
+        assert_eq!(required_revision("revision", Some(0)).unwrap(), 0);
+        assert_eq!(required_revision("revision", Some(7)).unwrap(), 7);
     }
 
     #[test]

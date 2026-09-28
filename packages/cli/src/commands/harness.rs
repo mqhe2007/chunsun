@@ -303,17 +303,41 @@ pub fn run_run(args: RunArgs) -> CmdResult {
                     print_reminders(&reminders);
                     Ok(())
                 }
+                // 撞锁分流。判据仍是 `Display` 的子串（API 那层的 `Http` 变体的
+                // Display 刻意与旧的 `Message` 逐字节一致，就是为了不打断这里），
+                // 但**取信息改成读错误报文**，不再补一次 `list_runs`。
+                //
+                // 后端 409 的 data 里已经带 `runId` / `index` / `lastActiveAt`：
+                // 它本来就是先读到那一行 running 才判定的，信息是现成的。
+                // 原来这里发的第二次 list_runs 不但多一次往返，还取错了字段 ——
+                // 打印的是 `r.started_at`（Run 开始时间），而后端 `lastActiveAt`
+                // 是这行**最后一次被写**的时间，也就是「僵尸判定」要看的那一个。
+                // 两个时间戳在长跑 Run 上能差几小时，会把「刚活跃」显示成「很久没动」。
                 Err(e) if e.to_string().contains("RUN_ALREADY_RUNNING") => {
-                    let runs = list_runs(&api, &config.project_id, &req)?;
-                    if let Some(r) = runs.iter().find(|r| r.status == "running") {
-                        println!(
-                            "[chunsun] 该需求已有 Run 在跑：#{} {}（最后活跃：{}）",
-                            r.index, r.id, r.started_at
-                        );
-                        println!("  -> 若该 Run 已僵死（CLI 崩溃残留），请执行：chunsun run takeover {req}");
-                        return Err(CmdError::exit_only(1));
+                    let conflict = e.body().and_then(|b| b.get("data").cloned());
+                    // 并发路径下来的是仓储层兜底 409，data 里只有 requirementId
+                    // ——那条路径没读到具体的 running 行，此处不强求。
+                    match conflict.as_ref() {
+                        Some(c) if c.get("runId").is_some() => {
+                            let index = c
+                                .get("index")
+                                .and_then(|v| v.as_i64())
+                                .map(|i| i.to_string())
+                                .unwrap_or_else(|| "?".into());
+                            let run_id =
+                                c.get("runId").and_then(|v| v.as_str()).unwrap_or("?");
+                            let last_active = c
+                                .get("lastActiveAt")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("未知");
+                            println!(
+                                "[chunsun] 该需求已有 Run 在跑：#{index} {run_id}（最后活跃：{last_active}）"
+                            );
+                        }
+                        _ => println!("[chunsun] 该需求已有 Run 在跑。"),
                     }
-                    Err(e.into())
+                    println!("  -> 若该 Run 已僵死（CLI 崩溃残留），请执行：chunsun run takeover {req}");
+                    Err(CmdError::exit_only(1))
                 }
                 Err(e) => Err(e.into()),
             }

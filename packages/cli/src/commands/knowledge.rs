@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::api::ApiClient;
-use crate::commands::{print_json, CmdError, CmdResult};
+use crate::commands::{print_conflict, print_json, CmdError, CmdResult};
 use crate::config::load_config;
 
 #[derive(Args)]
@@ -61,6 +61,13 @@ enum KnowledgeCommand {
     Update {
         /// 文档 ID
         doc_id: String,
+        /// 乐观锁版本号：**必填**。取自 `knowledge doc <id>` 输出的「版本」或 --json 的 revision。
+        /// 首次创建传 0（表示"我认为这行还不存在"）；更新传你读到的那一版。
+        ///
+        /// 这里用 clap 的必填（非 Option）而不是自己判空：缺了就在**本地**失败，
+        /// 不发出一次注定 400 的请求，错误信息也由 clap 统一给出用法提示。
+        #[arg(long)]
+        revision: i64,
         /// 新标题
         #[arg(long)]
         title: Option<String>,
@@ -147,6 +154,13 @@ struct KnowledgeDocDto {
     load_strategy: String,
     #[serde(default)]
     parent_id: Option<String>,
+    /// 乐观锁版本号。写回时必须原样带上（`--revision`）。
+    ///
+    /// `#[serde(default)]` 是为了**向前兼容旧后端**：升级期里 CLI 可能先于实例更新，
+    /// 那时响应里没有这个字段，硬解析会退化成「解析响应失败」这种什么都看不出的错。
+    /// 缺省为 0 之后，写回会得到后端的 `MISSING_REVISION`/冲突，错误信息指得准。
+    #[serde(default)]
+    revision: i64,
     updated_at: String,
 }
 
@@ -320,7 +334,12 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
         };
     }
 
-    // 子命令：单条文档查询
+    // 子命令：单条文档查询。
+    //
+    // 注意这条路径**不经过 `KnowledgeDocDto`**（它取的是 `Value`，既能拿知识文档
+    // 也能拿宪法 / memory 这两种形状不同的系统文档），所以 revision 的展示是在
+    // `print_doc_detail` 里按 `Value` 取的 —— 加字段时**不要只改 DTO**，
+    // 否则 `--json` 有、人读输出没有，Agent 会以为自己读到了但拿不到版本号。
     if let Some(KnowledgeCommand::Doc { doc_id, json }) = args.command {
         let path = match doc_id.as_str() {
             "constitution" => format!(
@@ -420,6 +439,7 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
     // 子命令：更新知识文档（PUT /knowledge/documents/:docId，至少提供一个字段）
     if let Some(KnowledgeCommand::Update {
         doc_id,
+        revision,
         title,
         content,
         strategy,
@@ -440,23 +460,43 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
                 ));
             }
             let content = content.ok_or_else(|| CmdError::new("请提供 --content"))?;
+            // 宪法走 /knowledge/constitution，memory 走 /memory —— 两者是不同的写入点
+            // （`upsert_project_policy` 与 `upsert_project_memory`），但都从 `revision = 0`
+            // 开始表示「尚不存在」。`--revision 0` 在这条路径上是新建语义。
             let (path, payload) = if doc_id == "constitution" {
                 (
                     format!("/projects/{}/knowledge/constitution", config.project_id),
-                    json!({ "content": content }),
+                    json!({ "content": content, "revision": revision }),
                 )
             } else {
                 (
                     format!("/projects/{}/memory", config.project_id),
-                    json!({ "snapshot": content }),
+                    json!({ "snapshot": content, "revision": revision }),
                 )
             };
-            let raw: Value = api.put(&path, payload)?;
+            // 不直接 `?`：409 要走 print_conflict 给出可操作提示，
+            // 而 `From<ApiError> for CmdError` 只会保留一行 Display 文本
+            // （那行文本里没有 currentRevision / currentContent —— 它们在 data 里）。
+            let raw: Value = match api.put(&path, payload) {
+                Ok(v) => v,
+                Err(e) if e.code() == Some("CONSTITUTION_CONFLICT")
+                    || e.code() == Some("MEMORY_CONFLICT") =>
+                {
+                    return Err(print_conflict(&e))
+                }
+                Err(e) => return Err(e.into()),
+            };
             let data = raw.get("data").unwrap_or(&raw);
             if json {
                 return print_json(data);
             }
             println!("[chunsun] 系统知识文档已更新：{doc_id}");
+            // 与知识文档同理由：把新版本号交出去，省掉写后的那次读。
+            // constitution 走 `constitution_dto`、memory 走 `project_memory_dto`，
+            // 两者都带 revision，所以这里取同一把钥匙。
+            if let Some(rev) = data.get("revision").and_then(|v| v.as_i64()) {
+                println!("  新版本（下次 --revision）：{rev}");
+            }
             return Ok(());
         }
         let mut body = Map::new();
@@ -484,13 +524,23 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
                 "请提供至少一个要更新的字段（--title、--content、--strategy、--sort-order 或 --parent）",
             ));
         }
-        let result: KnowledgeDocResponse = api.put(
+        // revision 由 clap 保证存在，这里是 `--revision` 与补丁字段的**本地**空补丁检查。
+        // 后端也会判（400 EMPTY_PATCH），但本地先拦一次可以省掉一次往返，
+        // 而且这条错误比后端那条更清楚：它直接列出可用的 flag。
+        body.insert("revision".into(), json!(revision));
+        let result: KnowledgeDocResponse = match api.put(
             &format!(
                 "/projects/{}/knowledge/documents/{}",
                 config.project_id, doc_id
             ),
             Value::Object(body),
-        )?;
+        ) {
+            Ok(r) => r,
+            Err(e) if e.code() == Some("KNOWLEDGE_DOC_CONFLICT") => {
+                return Err(print_conflict(&e))
+            }
+            Err(e) => return Err(e.into()),
+        };
         if !result.success {
             return Err(CmdError::new(
                 result.error.unwrap_or_else(|| "更新知识文档失败".into()),
@@ -505,6 +555,9 @@ pub fn run(args: KnowledgeArgs) -> CmdResult {
         println!("[chunsun] 知识文档已更新：{}", data.id);
         println!("  标题：{}", data.title);
         println!("  加载策略：{}", data.load_strategy);
+        // 写回后立刻把**新**版本号打出来：Agent 连续做几次编辑时不必再读一次。
+        // 这是「读-改-写」循环里最容易漏的一次往返 —— 漏了就得重新 GET。
+        println!("  新版本（下次 --revision）：{}", data.revision);
         println!(
             "  所属主文档：{}",
             data.parent_id.as_deref().unwrap_or("无（根文档）")
@@ -684,6 +737,13 @@ fn print_doc_detail(data: &Value) -> CmdResult {
         .unwrap_or("eager");
     let system = data.get("system").and_then(|v| v.as_bool()).unwrap_or(false);
     println!("知识文档：{title} (id={key}, strategy={ls})");
+
+    // 版本号必须出现在**人读输出**里，不能只给 `--json`：Agent 读一次之后紧接着
+    // 就要写回，而写回的 `--revision` 是必填的。藏在 JSON 里等于逼每一步都多一次
+    // `--json` 解析。缺失时（旧后端）直接不打印，而不是显示一个会误导人的 0。
+    if let Some(rev) = data.get("revision").and_then(|v| v.as_i64()) {
+        println!("  版本（写回时传 --revision）：{rev}");
+    }
 
     let breadcrumb: Vec<&Value> = data
         .get("breadcrumb")

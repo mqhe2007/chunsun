@@ -10,20 +10,25 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::api::{ok, AppError, ApiResponse, ValidatedJson};
+use crate::api::{ok, ApiResponse, AppError, ValidatedJson};
 use crate::auth::CurrentUser;
 use crate::core::memory::validate_memory_snapshot;
 use crate::core::serde_ext::double_option;
+use crate::repos::project_knowledge::WriteOutcome;
 use crate::repos::project_memory::{
-    get_project_memory, project_memory_dto, upsert_project_memory,
+    get_project_memory, project_memory_dto, upsert_project_memory, ProjectMemoryRow,
 };
 use crate::routes::project_knowledge::visible;
+use crate::routes::validate::required_revision;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 struct MemoryBody {
     #[serde(default, deserialize_with = "double_option")]
     snapshot: Option<Option<String>>,
+    /// 乐观锁版本号。**必填**——`0` 表示「我认为项目记忆还不存在」。
+    #[serde(default)]
+    revision: Option<i32>,
 }
 
 async fn get_memory_handler(
@@ -60,8 +65,44 @@ async fn put_memory_handler(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let pid = visible(&state, &session, &project_id).await?;
     let snapshot = validate_memory_snapshot(&body.snapshot)?;
-    let row = upsert_project_memory(&state.pool(), &pid, Some(snapshot)).await?;
-    Ok(ok(project_memory_dto(&row)))
+    let expected = required_revision("revision", body.revision)?;
+    // `validate_memory_snapshot` 返回的 `None` = 显式 null = 清空记忆，
+    // 而不再是「字段缺失」（缺失已在它内部 400）。仓储层收 `Option<&str>`
+    // 正是为了区分「置 NULL」与「不发 UPDATE」——后者现在到不了这里。
+    let outcome = upsert_project_memory(&state.pool(), &pid, snapshot, expected).await?;
+
+    match outcome {
+        WriteOutcome::Ok(row) => Ok(ok(project_memory_dto(&row))),
+        // 记忆行不存在且调用方声称的版本不是 0：项目记忆是「每项目一份」的固定成员，
+        // 「行还没建」不是资源不存在，而是调用方拿的版本号不自洽 → 409。
+        WriteOutcome::NotFound => Err(memory_conflict(&pid, expected, None)),
+        WriteOutcome::Conflict(current) => Err(memory_conflict(&pid, expected, Some(&current))),
+    }
+}
+
+/// 409 `MEMORY_CONFLICT`：附当前版本号 + 当前快照全文。
+///
+/// 快照有硬上限 10000 字符（`core::memory::MEMORY_SNAPSHOT_MAX_CHARS`），
+/// 全文回传没有体积顾虑——这点与知识文档不同（那边 `CONTENT_MAX` 无上限，
+/// 见 `routes::project_knowledge::knowledge_doc_conflict` 的讨论）。
+fn memory_conflict(
+    project_id: &str,
+    your_revision: i32,
+    current: Option<&ProjectMemoryRow>,
+) -> AppError {
+    let mut data = serde_json::json!({
+        "projectId": project_id,
+        "yourRevision": your_revision,
+        "currentRevision": current.map(|c| c.revision).unwrap_or(0),
+    });
+    if let Some(row) = current {
+        data["currentSnapshot"] = serde_json::json!(row.snapshot);
+        data["updatedAt"] = serde_json::json!(row.updated_at);
+    }
+    AppError::conflict("MEMORY_CONFLICT")
+        .with_message("项目记忆已被他人修改")
+        .with_hint("用 currentSnapshot 合并你的改动，revision 取 currentRevision 后重试")
+        .with_data(data)
 }
 
 pub fn router(state: AppState) -> Router<AppState> {

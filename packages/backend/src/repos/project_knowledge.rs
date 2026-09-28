@@ -23,6 +23,42 @@ fn now() -> DateTime<Utc> {
     Utc::now()
 }
 
+/// 乐观锁写入的三态结果。
+///
+/// **为什么不用 `rows_affected == 0` 直接判冲突**：条件更新落空有两种成因 ——
+/// 行不存在（该报 404）与 revision 不匹配（该报 409）。两者在 `rows_affected`
+/// 上不可区分，混为一谈会把「文档已被删除」误报成「版本冲突」。
+///
+/// `Conflict` 带出当前整行：409 响应要附最新正文供调用方合并，而这时再查一次
+/// 是同一个查询的重复，不如在落空的那次里一并取回。
+#[derive(Debug)]
+pub enum WriteOutcome<T> {
+    Ok(T),
+    NotFound,
+    Conflict(Box<T>),
+}
+
+/// 纯函数：给定「客户端声称的 revision」与「库里当前行的 revision」，判定是否放行。
+///
+/// 抽成纯函数是因为 repo 层的 SQL **没有任何测试基础设施**（全仓无 `sqlx::test`、
+/// 无 testcontainers），版本比较这种容易写反的逻辑必须能在 `#[test]` 下覆盖到。
+///
+/// `expected = 0` 是「我认为这行还不存在」的约定，用于首次写宪法 / 首次写记忆。
+/// 因此它只在行确实不存在时成立；行已存在但客户端传 0，是真冲突（有人抢先建了）。
+pub fn revision_matches(expected: i32, current: i32) -> bool {
+    expected == current
+}
+
+/// 纯函数：条件更新落空后，凭「重新查到的当前行」判定结果。
+///
+/// `None` 表示落空重查也没查到 —— 行确实没了，是 `NotFound`。
+pub fn classify_miss<T>(current: Option<T>) -> WriteOutcome<T> {
+    match current {
+        Some(row) => WriteOutcome::Conflict(Box::new(row)),
+        None => WriteOutcome::NotFound,
+    }
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub struct KnowledgeDocRow {
     pub id: String,
@@ -31,6 +67,7 @@ pub struct KnowledgeDocRow {
     pub sort_order: i32,
     pub load_strategy: String,
     pub parent_id: Option<String>,
+    pub revision: i32,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -45,11 +82,12 @@ pub struct KnowledgeDocNode {
 #[derive(Debug, Clone, FromRow)]
 pub struct ProjectPolicyRow {
     pub constitution_md: String,
+    pub revision: i32,
     pub updated_at: DateTime<Utc>,
 }
 
 const DOC_COLS: &str =
-    "id, title, content, sort_order, load_strategy, parent_id, created_at, updated_at";
+    "id, title, content, sort_order, load_strategy, parent_id, revision, created_at, updated_at";
 
 /// getProjectPolicy：`findUnique({ where: { projectId } })`，缺行返回 None（**不建行**）。
 pub async fn get_project_policy(
@@ -57,7 +95,7 @@ pub async fn get_project_policy(
     project_id: &str,
 ) -> Result<Option<ProjectPolicyRow>, AppError> {
     let row = sqlx::query_as::<_, ProjectPolicyRow>(
-        "SELECT constitution_md, updated_at FROM project_policy WHERE project_id = $1",
+        "SELECT constitution_md, revision, updated_at FROM project_policy WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_optional(pool)
@@ -65,30 +103,74 @@ pub async fn get_project_policy(
     Ok(row)
 }
 
-/// upsertProjectPolicy：`ON CONFLICT (project_id)` 对齐 Prisma 的 upsert。
+const POLICY_COLS: &str = "constitution_md, revision, updated_at";
+
+/// upsertProjectPolicy，带乐观锁。
 ///
-/// 路由层 `content` 是必填的，所以 create / update 两个分支都会写 `constitution_md`，
-/// 不需要复刻 Prisma update 分支里那个 `?? {}` 的条件展开。
+/// **从单条 `ON CONFLICT DO UPDATE` 改成两段式**，理由不是性能而是可判定性：
+/// 把 revision 谓词写在 `DO UPDATE ... WHERE` 上时，谓词不成立会**静默不更新并返回 0 行**，
+/// 与「IN 的表压根没这行」在 `rows_affected` 上完全同形，无法区分 404 与 409。
+/// 拆成「先条件 UPDATE，落空再决定插入/冲突」后，两条分支的下场各自明确，
+/// 且与另外三个写入点形态一致 —— 形态一致比省一次查询重要。
+///
+/// `expected_revision = 0` 表示调用方认为宪法尚不存在（首次写入）。
 pub async fn upsert_project_policy(
     pool: &PgPool,
     project_id: &str,
     constitution_md: &str,
-) -> Result<ProjectPolicyRow, AppError> {
+    expected_revision: i32,
+) -> Result<WriteOutcome<ProjectPolicyRow>, AppError> {
     let ts = now();
-    let row = sqlx::query_as::<_, ProjectPolicyRow>(
-        "INSERT INTO project_policy (id, project_id, constitution_md, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $4) \
-         ON CONFLICT (project_id) DO UPDATE SET constitution_md = EXCLUDED.constitution_md, \
-           updated_at = EXCLUDED.updated_at \
-         RETURNING constitution_md, updated_at",
-    )
+
+    // 第一段：按 revision 条件更新。命中即返回。
+    let updated = sqlx::query_as::<_, ProjectPolicyRow>(&format!(
+        "UPDATE project_policy SET constitution_md = $1, revision = revision + 1, updated_at = $2 \
+         WHERE project_id = $3 AND revision = $4 RETURNING {POLICY_COLS}"
+    ))
+    .bind(constitution_md)
+    .bind(ts)
+    .bind(project_id)
+    .bind(expected_revision)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(row) = updated {
+        return Ok(WriteOutcome::Ok(row));
+    }
+
+    // 第二段：落空。先看行在不在，再决定是冲突还是需要插入。
+    let current = get_project_policy(pool, project_id).await?;
+    if let Some(row) = current {
+        // 行存在但 revision 不符 —— 有人抢先写了（或调用方拿的是旧版本号）。
+        return Ok(WriteOutcome::Conflict(Box::new(row)));
+    }
+
+    // 行不存在。只有 `expected_revision = 0` 才允许建，否则是调用方声称的版本
+    // 与「不存在」这一事实矛盾，属于冲突而不是创建。
+    if !revision_matches(expected_revision, 0) {
+        return Ok(WriteOutcome::NotFound);
+    }
+
+    // 并发下两个请求可能同时走到这里，`ON CONFLICT` 兜住后者：它撞上唯一约束，
+    // 转成条件更新重新判定（此时 expected_revision 是 0，而库里已是 1，必然是冲突）。
+    let inserted = sqlx::query_as::<_, ProjectPolicyRow>(&format!(
+        "INSERT INTO project_policy (id, project_id, constitution_md, revision, created_at, updated_at) \
+         VALUES ($1, $2, $3, 1, $4, $4) \
+         ON CONFLICT (project_id) DO NOTHING \
+         RETURNING {POLICY_COLS}"
+    ))
     .bind(nanoid(12))
     .bind(project_id)
     .bind(constitution_md)
     .bind(ts)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
-    Ok(row)
+
+    match inserted {
+        Some(row) => Ok(WriteOutcome::Ok(row)),
+        // 撞上并发插入：别人先建了，本次是丢失更新，报冲突并带出当前内容。
+        None => Ok(classify_miss(get_project_policy(pool, project_id).await?)),
+    }
 }
 
 /// listContextDocuments：`orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }]`，
@@ -215,8 +297,8 @@ pub async fn create_knowledge_document(
     let ts = now();
     let sql = format!(
         "INSERT INTO project_knowledge_document \
-           (id, project_id, title, content, sort_order, load_strategy, parent_id, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING {DOC_COLS}"
+           (id, project_id, title, content, sort_order, load_strategy, parent_id, revision, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8) RETURNING {DOC_COLS}"
     );
     let row = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
         .bind(nanoid(12))
@@ -232,30 +314,29 @@ pub async fn create_knowledge_document(
     Ok(row)
 }
 
-/// updateContextDocument 的写入部分（调用方已确认行存在）。
+/// updateContextDocument 的写入部分，带乐观锁。
 ///
-/// 各字段都是 `Option`：`None` = 请求里没这个 key = 不写。**全 None 时直接不发
-/// UPDATE**，对齐 Prisma 空 `data` 不刷新 `@updatedAt` 的行为。
+/// 各字段都是 `Option`：`None` = 请求里没这个 key = 不写。
+///
+/// **空补丁不再在这里短路**。旧实现对「全 None」直接 `Ok(existing.clone())`，那是复刻
+/// Prisma 空 `data` 不刷新 `@updatedAt` 的行为。但新协议要求写入必须携带 revision，
+/// 而空补丁 + 带 revision 仍然不是一个有意义的写请求 —— 该由 handler 层拒绝（400），
+/// 而不是在这里变成一个「看起来成功、其实什么都没做」的响应，那会掩盖调用方的 bug。
 ///
 /// `parent_id` 是双层 Option：外层 None = 不改，内层 None = 显式解除关联（写 NULL）。
+///
+/// `expected_revision` 参与 WHERE 谓词：命中则写并 `revision + 1`，落空则重查一次
+/// 判定 `Conflict` / `NotFound`。
 pub async fn update_knowledge_document(
     pool: &PgPool,
-    existing: &KnowledgeDocRow,
+    doc_id: &str,
+    expected_revision: i32,
     title: Option<&str>,
     content: Option<&str>,
     sort_order: Option<i32>,
     load_strategy: Option<&str>,
     parent_id: Option<Option<&str>>,
-) -> Result<KnowledgeDocRow, AppError> {
-    if title.is_none()
-        && content.is_none()
-        && sort_order.is_none()
-        && load_strategy.is_none()
-        && parent_id.is_none()
-    {
-        return Ok(existing.clone());
-    }
-
+) -> Result<WriteOutcome<KnowledgeDocRow>, AppError> {
     let mut sets: Vec<String> = Vec::new();
     let mut idx = 1;
     if title.is_some() {
@@ -278,11 +359,18 @@ pub async fn update_knowledge_document(
         sets.push(format!("parent_id = ${idx}"));
         idx += 1;
     }
+    sets.push(format!("revision = revision + 1"));
     sets.push(format!("updated_at = ${idx}"));
     idx += 1;
 
+    let id_placeholder = idx;
+    idx += 1;
+    let revision_placeholder = idx;
+
     let sql = format!(
-        "UPDATE project_knowledge_document SET {} WHERE id = ${idx} RETURNING {DOC_COLS}",
+        "UPDATE project_knowledge_document SET {} \
+         WHERE id = ${id_placeholder} AND revision = ${revision_placeholder} \
+         RETURNING {DOC_COLS}",
         sets.join(", ")
     );
     let mut q = sqlx::query_as::<_, KnowledgeDocRow>(&sql);
@@ -302,7 +390,32 @@ pub async fn update_knowledge_document(
     if let Some(p) = parent_id {
         q = q.bind(p.map(str::to_string));
     }
-    let row = q.bind(now()).bind(&existing.id).fetch_one(pool).await?;
+    let updated = q
+        .bind(now())
+        .bind(doc_id)
+        .bind(expected_revision)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(row) = updated {
+        return Ok(WriteOutcome::Ok(row));
+    }
+
+    // 落空：重查一次区分「行没了」与「版本不符」。
+    let current = get_knowledge_doc_by_id(pool, doc_id).await?;
+    Ok(classify_miss(current))
+}
+
+/// 按 id 取单行（乐观锁落空后的重查，以及 409 组装时取当前正文）。
+pub async fn get_knowledge_doc_by_id(
+    pool: &PgPool,
+    doc_id: &str,
+) -> Result<Option<KnowledgeDocRow>, AppError> {
+    let sql = format!("SELECT {DOC_COLS} FROM project_knowledge_document WHERE id = $1");
+    let row = sqlx::query_as::<_, KnowledgeDocRow>(&sql)
+        .bind(doc_id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -387,6 +500,7 @@ mod tests {
             sort_order: 0,
             load_strategy: "eager".to_string(),
             parent_id: parent_id.map(str::to_string),
+            revision: 1,
             updated_at: Utc::now(),
         }
     }
@@ -447,5 +561,52 @@ mod tests {
     fn forest_breaks_self_parent_cycle() {
         let out = build_forest(vec![row("self", Some("self"))]);
         assert_eq!(layout(&out), vec![("self".into(), 0)]);
+    }
+
+    // ---------- 乐观锁判定 ----------
+    //
+    // 这四个写入点（知识文档 / 宪法 / 项目记忆 / 需求记忆）的行为**完全依赖**
+    // 下面两个纯函数，而 repo 层没有连库测试基础设施（无 `sqlx::test`、
+    // 无 testcontainers），SQL 本身只能在真实 Postgres 上手测。
+    // 所以把「拿到什么结果该判成什么」抽出来钉死在这里——它是这套保护里唯一
+    // 可以在 CI 上验证的一环。
+
+    #[test]
+    fn revision_matches_only_on_exact_equality() {
+        assert!(revision_matches(7, 7));
+        assert!(revision_matches(0, 0));
+        // 只增不减：并发写入让库里版本更高时，旧版本号必须落空
+        assert!(!revision_matches(6, 7));
+        // 库里版本更低同样落空 —— 客户端拿的是未来版本号，说明它读到了别处的数据
+        assert!(!revision_matches(8, 7));
+    }
+
+    #[test]
+    fn classify_miss_with_a_current_row_is_a_conflict() {
+        let outcome = classify_miss(Some(row("d1", None)));
+        match outcome {
+            WriteOutcome::Conflict(current) => assert_eq!(current.id, "d1"),
+            other => panic!("期望 Conflict，得到 {other:?}"),
+        }
+    }
+
+    /// 判定的**关键分界**：条件 UPDATE 落空后重查，查不到就是行没了。
+    /// 若这里错判成 Conflict，删掉的文档会变成 409「版本冲突」，
+    /// 客户端会拿 `currentContent` 去合并一份根本不存在的正文。
+    #[test]
+    fn classify_miss_without_a_current_row_is_not_found() {
+        let outcome: WriteOutcome<KnowledgeDocRow> = classify_miss(None);
+        assert!(matches!(outcome, WriteOutcome::NotFound));
+    }
+
+    /// `revision = 0` 的「我认为这行还不存在」语义。
+    /// 它只在**行确实不存在**时才允许走到建行分支；行存在时是冲突（已经在别处建过）。
+    #[test]
+    fn revision_zero_is_the_create_intent_not_a_valid_existing_revision() {
+        assert!(revision_matches(0, 0), "首次创建：声称不存在，库里也不存在");
+        assert!(
+            !revision_matches(0, 1),
+            "行已存在（revision=1）时，声称「不存在」的写必须落空"
+        );
     }
 }
