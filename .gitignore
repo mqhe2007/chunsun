@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# pnpm 本地内容寻址存储（pnpm store-dir 落在仓库内时产生）
+.pnpm-store/
 .DS_Store
 /**/mcp.json
 

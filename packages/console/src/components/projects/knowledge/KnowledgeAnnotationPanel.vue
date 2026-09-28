@@ -7,10 +7,13 @@ import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
 /**
  * 批注面板（需求 u-WPvdvYh4Fw，方案甲：右侧第三栏常驻）。
  *
- * 权限到按钮级：编辑 / 删除仅作者（后端 403 兜底）；结案 / 重新打开所有成员可用
- * （选项 B：AI 可结案，人可重开兜底）。面板本身不做权限判断以外的数据操作，
- * 全部动作 emit 给宿主（宿主持有 useAnnotations 状态，桌面栏与移动抽屉两个
- * 实例共享同一数据源）。
+ * 权限到按钮级：编辑 / 删除看后端下发的 `canModerate`（作者本人 ∪ 项目创建者
+ * ∪ 平台 ADMIN，后端 403 兜底）；结案 / 重新打开所有成员可用（选项 B：AI 可结案，
+ * 人可重开兜底）。面板本身不做任何权限判定 —— 判在服务端，前端只读结果，
+ * 这样「谁能改」只有一份实现。
+ *
+ * 面板不做数据操作，全部动作 emit 给宿主（宿主持有 useAnnotations 状态，
+ * 桌面栏与移动抽屉两个实例共享同一数据源）。
  *
  * 新建批注走「正文选区工具条 → 模态框」（宿主渲染），面板只列已存在的批注，
  * 列表按紧凑卡片排版：第一行是批注正文标题，第二行是状态、时间与操作。
@@ -19,7 +22,6 @@ import type { KnowledgeAnnotation } from "@/composables/useAnnotations";
 const props = defineProps<{
   annotations: KnowledgeAnnotation[];
   loading: boolean;
-  currentUserId: string | null;
   /** 点击正文高亮时设置的批注 id，联动滚动到这里。 */
   activeId: string | null;
 }>();
@@ -50,8 +52,9 @@ const resolveNote = ref("");
 const openList = () => props.annotations.filter(a => a.status === "open" || a.status === "stale");
 const resolvedList = () => props.annotations.filter(a => a.status === "resolved");
 
-function isAuthor(ann: KnowledgeAnnotation): boolean {
-  return Boolean(props.currentUserId) && ann.createdBy === props.currentUserId;
+/** 能否编辑 / 删除：后端算好（作者本人 ∪ 项目所有者），前端直接用。 */
+function canModerate(ann: KnowledgeAnnotation): boolean {
+  return ann.canModerate;
 }
 
 function timeLabel(iso: string): string {
@@ -208,7 +211,7 @@ function locateDetails() {
                 >
                   <Eye :size="13" aria-hidden="true" />
                 </button>
-                <template v-if="isAuthor(ann)">
+                <template v-if="canModerate(ann)">
                   <button
                     type="button"
                     class="btn btn-ghost btn-square btn-xs"
@@ -354,6 +357,26 @@ function locateDetails() {
                 >
                   <Eye :size="13" aria-hidden="true" />
                 </button>
+                <template v-if="canModerate(ann)">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-square btn-xs shrink-0"
+                    aria-label="编辑批注"
+                    title="编辑"
+                    @click.stop="startEdit(ann)"
+                  >
+                    <Pencil :size="13" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-square btn-xs shrink-0 text-error"
+                    aria-label="删除批注"
+                    title="删除"
+                    @click.stop="emit('remove', ann.id)"
+                  >
+                    <Trash2 :size="13" aria-hidden="true" />
+                  </button>
+                </template>
                 <button
                   type="button"
                   class="btn btn-ghost btn-square btn-xs shrink-0"
@@ -363,6 +386,31 @@ function locateDetails() {
                 >
                   <RotateCcw :size="13" aria-hidden="true" />
                 </button>
+              </div>
+
+              <!-- 编辑态：已结案条目也能改正文（与未处理段同口径） -->
+              <div
+                v-if="editingId === ann.id"
+                class="mt-1 flex flex-col gap-1.5 border-t border-base-300 pt-2"
+              >
+                <textarea
+                  v-model="editingBody"
+                  class="textarea textarea-bordered w-full text-sm"
+                  rows="3"
+                />
+                <div class="flex justify-end gap-2">
+                  <button type="button" class="btn btn-ghost btn-xs" @click="editingId = null">
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-xs"
+                    :disabled="!editingBody.trim()"
+                    @click="submitEdit"
+                  >
+                    保存
+                  </button>
+                </div>
               </div>
             </div>
           </div>
