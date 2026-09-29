@@ -15,6 +15,7 @@ import {
   parseVersionConflict,
   type VersionConflict,
 } from "@/utils/versionConflict";
+import { isAbsentRowError } from "@/utils/absentRow";
 import {
   selectionToolbarPlacement,
   type SelectionToolbarPlacement,
@@ -35,13 +36,19 @@ type DocPayload = {
   system: boolean;
   loadStrategy?: string;
   /**
-   * 乐观锁版本号（后端 `revision` 列）。写入时必须原样回传。
+   * 乐观锁版本号（后端 `revision` 列），**必填**。
    *
-   * 可缺省是**兼容旧后端**：升级期里 Console 可能先于实例部署，那时响应里没有
-   * 这个字段。缺省为 0 后写回会得到后端的 409/400，错误信息指得准；
-   * 若硬解析成 `undefined` 并原样发出，后端会当成「缺版本」报 400 MISSING_REVISION。
+   * 曾经是可选的，并在 `applyDoc` 里 `?? 0` 兜底「兼容旧后端」。那个兜底把
+   * 「响应里没读到这个字段」和「后端确实不下发这个字段」压成同一个值，于是
+   * 三个 `loadDoc` 分支漏传 `revision` 时没有任何报错 —— 版本号静默变成 0。
+   * 而后端对 0 的定义是「我认为这一行还不存在」，库里却是 1，于是每一次保存
+   * 都精确地报「你的版本 0，当前版本 1」。
+   *
+   * 标成必填后，漏传是**编译期**错误：新增读取分支时不可能再默默丢掉它。
+   * 没有真正下发版本号的旧实例也不再需要照顾 —— 缺字段就是读不到版本，
+   * `revision` 保持 null、写入被拦，比带着伪造的 0 去撞 409 诚实得多。
    */
-  revision?: number;
+  revision: number;
   updatedAt?: string;
 };
 
@@ -164,13 +171,23 @@ async function loadDoc() {
         content: data.data.content ?? "",
         system: true,
         loadStrategy: "eager",
+        revision: data.data.revision,
         updatedAt: data.data.updatedAt,
       });
     } else if (isMemory.value) {
       try {
         const { data } = await api.get<{
           success: boolean;
-          data: { snapshot: string | null; updatedAt?: string };
+          data: {
+            snapshot: string | null;
+            /**
+             * `GET /memory` 恒下发版本号：缺行时后端给 0（与「首次写入传 0」的
+             * 建行语义对齐）。故这里**不标可选** —— 标可选就等于承认「读到了行
+             * 却没有版本号」，那种状态没有合法处理方式，只该在类型层面不成立。
+             */
+            revision: number;
+            updatedAt?: string;
+          };
         }>(`/projects/${projectId.value}/memory`);
         if (!data.success) throw new Error("fail");
         applyDoc({
@@ -179,16 +196,23 @@ async function loadDoc() {
           content: data.data.snapshot ?? "",
           system: true,
           loadStrategy: "eager",
+          revision: data.data.revision,
           updatedAt: data.data.updatedAt,
         });
-      } catch {
-        // 尚无记忆行时允许从空文档开始编辑（PUT 会 upsert）
+      } catch (err) {
+        // 只有「后端明确说这行不存在」才降级为空文档：此时 revision = 0 是准确的
+        // 陈述（这行确实不存在），PUT 的 upsert 正是我们要的建行路径。
+        if (!isAbsentRowError(err)) throw err;
         applyDoc({
           key: MEMORY_KEY,
           title: MEMORY_TITLE,
           content: "",
           system: true,
           loadStrategy: "eager",
+          // 显式 0 = 「我认为项目记忆还不存在」，与后端 `expected_revision = 0`
+          // 的建行分支对齐。**不能省略**：`DocPayload.revision` 是必填的，而且
+          // 语义上这里确实知道版本号 —— 就是「不存在」。
+          revision: 0,
         });
       }
     } else {
@@ -199,6 +223,7 @@ async function loadDoc() {
           title: string;
           content: string;
           loadStrategy?: string;
+          revision?: number;
           updatedAt?: string;
         } & RelationPayload;
       }>(`/projects/${projectId.value}/knowledge/documents/${docKey.value}`);
@@ -209,6 +234,7 @@ async function loadDoc() {
         content: data.data.content ?? "",
         system: false,
         loadStrategy: (data.data.loadStrategy as "eager" | "lazy") || "eager",
+        revision: data.data.revision,
         updatedAt: data.data.updatedAt,
       });
       applyRelation(data.data);
@@ -228,7 +254,12 @@ function applyDoc(doc: DocPayload) {
   savedContent.value = doc.content;
   system.value = doc.system;
   loadStrategy.value = (doc.loadStrategy as "eager" | "lazy") || "eager";
-  revision.value = doc.revision ?? 0;
+  // 兜底成 null 而不是 0：0 是「我认为这行还不存在」这个**合法的写意图**，
+  // 用它兜底会把「没读到版本」伪装成一次创建；null 是「我不知道」，save() 会
+  // 据此拦住写入并提示重新加载。同为兜底，方向相反。
+  // 类型上 `revision` 必填，但运行时仍可能拿到 undefined（旧实例响应缺字段），
+  // 故保留这一层，让 `revision` 的不变量始终是「有效数字或 null」。
+  revision.value = doc.revision ?? null;
   updatedAt.value = doc.updatedAt ?? null;
 }
 
