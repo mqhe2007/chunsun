@@ -1,6 +1,7 @@
 import axios from "axios";
 import { appToast } from "@/ui";
 import { router } from "../router";
+import { parseVersionConflict } from "./versionConflict";
 
 /** 实例始终挂在 origin 根路径；Vite base（/console/）不能带进 API。 */
 function resolveApiBaseUrl(): string {
@@ -69,6 +70,17 @@ api.interceptors.response.use(
 
     // 尚无工作记忆是良性空状态（旧码 CONTEXT_NOT_FOUND，重命名后 MEMORY_NOT_FOUND）
     if (message === "CONTEXT_NOT_FOUND" || message === "MEMORY_NOT_FOUND") {
+      return Promise.reject(error);
+    }
+
+    // 乐观锁冲突（409 *_CONFLICT）：**不进最后那条通用分支**。
+    //
+    // 通用分支把裸错误码当文案 toast（`appToast.error("错误", "KNOWLEDGE_DOC_CONFLICT")`），
+    // 而这条路径的正确出路是「重新加载后合并重写」——用户需要看到版本对比，
+    // 也需要一个**留在页面上**的入口，不是 3 秒后消失的 toast。
+    // 所以这里只 reject，渲染交给发起写入的页面（知识库工作台给提示条 + 重新加载按钮）。
+    //
+    if (parseVersionConflict(error)) {
       return Promise.reject(error);
     }
 

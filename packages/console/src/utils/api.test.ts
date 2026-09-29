@@ -102,6 +102,45 @@ describe("api response interceptor", () => {
     expect(toastAdd).not.toHaveBeenCalled();
   });
 
+  test("乐观锁冲突不弹裸错误码 toast，交给页面渲染", async () => {
+    // 通用分支会 toast 出 "KNOWLEDGE_DOC_CONFLICT" 这五个字母，
+    // 而用户需要的是「谁的版本更新」和一个留在页面上的合并入口
+    const err = makeError("KNOWLEDGE_DOC_CONFLICT", 409, "/projects/p1/knowledge/documents/d1");
+    (err.response as { data: unknown }).data = {
+      error: "KNOWLEDGE_DOC_CONFLICT",
+      data: { yourRevision: 3, currentRevision: 5, currentContent: "对方的正文" },
+    };
+    await expect(rejected(err)).rejects.toBe(err);
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  test("冲突提示不被 3 秒去重压掉（连续两次保存失败都要有反馈）", async () => {
+    // 去重是按文案 + 3 秒窗口做的；冲突若走那条路，「刚失败又点了一次」
+    // 会看起来像没反应，用户会以为按钮坏了
+    const mk = () => {
+      const e = makeError("MEMORY_CONFLICT", 409, "/projects/p1/memory");
+      (e.response as { data: unknown }).data = {
+        error: "MEMORY_CONFLICT",
+        data: { yourRevision: 1, currentRevision: 2, currentSnapshot: "x" },
+      };
+      return e;
+    };
+    await expect(rejected(mk())).rejects.toBeDefined();
+    await expect(rejected(mk())).rejects.toBeDefined();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastWarn).not.toHaveBeenCalled();
+  });
+
+  test("Run 撞锁（同是 409 但不是版本冲突）仍走通用分支", async () => {
+    // RUN_ALREADY_RUNNING 的出路是「接管」，不是「合并重写」，
+    // 不能被 conflict 分支吞掉而失去提示
+    const err = makeError("RUN_ALREADY_RUNNING", 409);
+    await expect(rejected(err)).rejects.toBe(err);
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastError.mock.calls[0]).toEqual(["错误", "RUN_ALREADY_RUNNING"]);
+  });
+
   test("其他错误仍弹 toast 并 reject", async () => {
     const err = makeError("REQUIREMENT_NOT_FOUND", 404);
     await expect(rejected(err)).rejects.toBe(err);

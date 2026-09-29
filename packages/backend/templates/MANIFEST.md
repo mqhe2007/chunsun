@@ -61,6 +61,15 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ③结案必须显式 addressed/dismissed 并填写可核查依据，需用户决策时不得结案；
 > ④CLI 新增 `knowledge annotation list|resolve|reopen`，`knowledge doc/update` 支持 constitution/memory 系统文档。
 >
+> 2026-09-28-knowledge-optimistic-lock：知识库 / 记忆的并发写入保护（乐观锁）——
+> ①四个全量覆盖写入点（知识文档 / 宪法 / 项目记忆 / 需求记忆）新增 `revision` 整数列作版本载体，写入改为 `WHERE id = ? AND revision = ?` 条件更新；
+> ②版本字段**必填**，缺失即 400 `MISSING_REVISION`；空补丁同样 400。首次写传 `revision: 0`；
+> ③版本不匹配返回 409 `KNOWLEDGE_DOC_CONFLICT` / `CONSTITUTION_CONFLICT` / `MEMORY_CONFLICT`，`data` 内含 `yourRevision` / `currentRevision` / 当前正文，供调用方合并重试；
+> ④skill.md 新增「乐观锁（必读）」与「冲突处理」两节（重试上限 2 次，耗尽转 ask_user，禁止无限重试）；
+> ⑤CLI 四个写入命令新增**必填** `--revision`，四个读取命令输出当前版本；冲突统一打印版本对比与正文长度（全文走 `--json`）；
+> ⑥同一批次的 Run 锁下沉：`run` 表新增「每需求至多一条 running」部分唯一索引与 `(requirement_id, index)` 唯一约束，接管（takeover）与开新 Run 合并进同一事务。
+> 升级提示：本次为**硬破坏**——不带 `--revision` 的写入一律 400，后端与 CLI / Console 须同步发版。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

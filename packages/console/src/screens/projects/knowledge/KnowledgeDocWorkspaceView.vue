@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
 import { MessageSquarePlus } from "@lucide/vue";
-import { AppField, AppModal, AppPage, confirm, useToast } from "@/ui";
+import { AppAlert, AppField, AppModal, AppPage, confirm, useToast } from "@/ui";
 import MarkdownReader from "@/components/common/MarkdownReader.vue";
 import MarkdownCodeMirror from "@/components/common/MarkdownCodeMirror.vue";
 import KnowledgeSharePanel from "@/components/projects/knowledge/KnowledgeSharePanel.vue";
@@ -10,6 +10,11 @@ import KnowledgeAnnotationPanel from "@/components/projects/knowledge/KnowledgeA
 import { useAnnotations } from "@/composables/useAnnotations";
 import { useAnnotationHighlights } from "@/composables/useAnnotationHighlights";
 import { normalizeAnchorText } from "@/utils/annotationAnchor";
+import {
+  describeVersionConflict,
+  parseVersionConflict,
+  type VersionConflict,
+} from "@/utils/versionConflict";
 import {
   selectionToolbarPlacement,
   type SelectionToolbarPlacement,
@@ -29,6 +34,14 @@ type DocPayload = {
   content: string;
   system: boolean;
   loadStrategy?: string;
+  /**
+   * 乐观锁版本号（后端 `revision` 列）。写入时必须原样回传。
+   *
+   * 可缺省是**兼容旧后端**：升级期里 Console 可能先于实例部署，那时响应里没有
+   * 这个字段。缺省为 0 后写回会得到后端的 409/400，错误信息指得准；
+   * 若硬解析成 `undefined` 并原样发出，后端会当成「缺版本」报 400 MISSING_REVISION。
+   */
+  revision?: number;
   updatedAt?: string;
 };
 
@@ -62,6 +75,15 @@ const savedContent = ref("");
 const loadStrategy = ref<"eager" | "lazy">("eager");
 const system = ref(false);
 const updatedAt = ref<string | null>(null);
+/**
+ * 当前持有的版本号。读到就存、写成就更新 —— 这是**唯一**的版本来源，
+ * 不允许在写入时临时拼一个（见 save() 的注释）。
+ *
+ * null 表示「还没读到版本」（加载中/加载失败），此时禁止写入。
+ * 与 0 的区别很关键：0 是「我认为这行还不存在」，是一次合法的创建意图；
+ * null 是「我不知道」，写入应被拦住而不是被当成创建。
+ */
+const revision = ref<number | null>(null);
 const notFound = ref(false);
 
 // 主文档/分册关联（需求 AOzsC2VvzMHL）
@@ -126,6 +148,10 @@ const pageTitle = computed(() => {
 async function loadDoc() {
   loading.value = true;
   notFound.value = false;
+  // 先置空再读：加载中途（或加载失败）不允许残留上一份版本号。
+  // 残留的版本号比没有更危险 —— 它会通过判空检查，然后带着过期版本发出去，
+  // 要么误报冲突，要么在对方已改的前提下一路写成。
+  revision.value = null;
   try {
     if (isConstitution.value) {
       const { data } = await api.get<{ success: boolean; data: DocPayload }>(
@@ -202,6 +228,7 @@ function applyDoc(doc: DocPayload) {
   savedContent.value = doc.content;
   system.value = doc.system;
   loadStrategy.value = (doc.loadStrategy as "eager" | "lazy") || "eager";
+  revision.value = doc.revision ?? 0;
   updatedAt.value = doc.updatedAt ?? null;
 }
 
@@ -239,52 +266,135 @@ function openRelated(id: string) {
   router.push({ path: `/projects/${projectId.value}/knowledge/docs/${id}` });
 }
 
+/** 未解决的乐观锁冲突；非 null 时编辑器顶部常驻提示条（toast 会消失，它不会）。 */
+const conflict = ref<VersionConflict | null>(null);
+
+/** 冲突发生时刻的本地草稿；重新加载后供对照合并，不被远端版本冲掉。 */
+const conflictDraft = ref<string | null>(null);
+
+/** 冲突提示里的版本对比，供提示条与 toast 共用。 */
+const conflictText = computed(() =>
+  conflict.value ? describeVersionConflict(conflict.value) : "",
+);
+
+function clearConflict() {
+  conflict.value = null;
+}
+
 async function save() {
   if (!isSystem.value && !title.value.trim()) {
     toast.warn("请填写标题");
     return;
   }
+  // 没读到版本就不发写请求：宁可让用户点一次重新加载，也不要发一次注定 400 的请求，
+  // 更不要「猜」一个版本号 —— 猜中会覆盖别人的改动，猜不中会拿到一个假冲突。
+  if (revision.value === null) {
+    toast.warn("尚未取得版本号", "请先重新加载文档再保存");
+    return;
+  }
+  const expected = revision.value;
   saving.value = true;
   try {
     if (isConstitution.value) {
-      const res = await api.put<{ success: boolean }>(
+      const res = await api.put<{ success: boolean; data?: DocPayload }>(
         `/projects/${projectId.value}/knowledge/constitution`,
-        { content: content.value },
+        { content: content.value, revision: expected },
       );
       if (!res.data.success) throw new Error("fail");
+      if (res.data.data?.revision != null) revision.value = res.data.data.revision;
     } else if (isMemory.value) {
-      const res = await api.put<{ success: boolean }>(
+      const res = await api.put<{ success: boolean; data?: DocPayload }>(
         `/projects/${projectId.value}/memory`,
-        { snapshot: content.value },
+        { snapshot: content.value, revision: expected },
       );
       if (!res.data.success) throw new Error("fail");
+      if (res.data.data?.revision != null) revision.value = res.data.data.revision;
     } else {
-      const res = await api.put<{ success: boolean }>(
+      const res = await api.put<{ success: boolean; data?: DocPayload }>(
         `/projects/${projectId.value}/knowledge/documents/${docKey.value}`,
         {
           title: title.value.trim(),
           content: content.value,
           loadStrategy: loadStrategy.value,
           parentId: parentId.value,
+          revision: expected,
         },
       );
       if (!res.data.success) throw new Error("fail");
+      if (res.data.data?.revision != null) revision.value = res.data.data.revision;
       // 关联可能变化：回读面包屑/子文档并同步已保存的父
       const { data } = await api.get<{
         success: boolean;
-        data: RelationPayload;
+        data: RelationPayload & { revision?: number };
       }>(`/projects/${projectId.value}/knowledge/documents/${docKey.value}`);
-      if (data.success) applyRelation(data.data);
+      if (data.success) {
+        applyRelation(data.data);
+        // 回读顺手带回的版本，用于消掉「保存后 revision 可能又变了」的窗口
+        if (data.data.revision != null) revision.value = data.data.revision;
+      }
       void loadParentOptions();
     }
     savedContent.value = content.value;
+    clearConflictState();
     toast.success("已保存");
-  } catch {
-    toast.error("保存失败");
+  } catch (err) {
+    const info = parseVersionConflict(err);
+    if (info) {
+      // 冲突不是「保存失败」：请求本身没错，是这一行被抢在了前面。
+      // 硬重试（拿旧版本再发一次）必然再失败，所以这里不给重试按钮，
+      // 只给两件真能解决的事：看最新正文、带着草稿重新加载。
+      conflict.value = info;
+      toast.warn("写入被拒绝", describeVersionConflict(info));
+    } else {
+      toast.error("保存失败");
+    }
   } finally {
     saving.value = false;
   }
 }
+
+/**
+ * 冲突后重新加载：**把最新正文取到眼前，同时把草稿收进提示条**。
+ *
+ * 为什么不直接 `loadDoc()` 了事：当前正文会被对方的版本替换掉，
+ * 而用户在编辑器里写的那一段没有任何副本 —— 他只能凭记忆重打。
+ * 所以先抓一份草稿再加载，加载完让他自己对照合并。
+ *
+ * 加载后的状态是很明确的：
+ * - `content` = 对方的版本，`savedContent` 也是它（`loadDoc` 里 `applyDoc` 设的），
+ *   所以「未保存」标记如实反映「当前编辑器内容 == 已保存版本」；
+ * - `revision` = 刚读到的版本，正是下一次写入该用的那一个。
+ *   这一点是**版本号在 applyDoc 里重置**换来的 —— 若沿用冲突时的旧版本，
+ *   合并后的写入会再撞一次 409，看起来像「重载没用」。
+ */
+async function reloadAfterConflict() {
+  if (!conflict.value) return;
+  const draft = content.value;
+  try {
+    await loadDoc();
+  } catch {
+    // loadDoc 内部已处理失败态（notFound + toast）
+    return;
+  }
+  conflictDraft.value = draft;
+}
+
+/** 放弃合并：把自己的草稿放回编辑器（此时版本号已是最新的，可以直接存）。 */
+function restoreConflictDraft() {
+  if (conflictDraft.value === null) return;
+  content.value = conflictDraft.value;
+  // 必须同时挪 `savedContent` 的基准：`loadDoc` 刚把它设成对方的正文，
+  // 而我们要的是「我的草稿 vs **已存的**对方正文」这个比较。
+  // 不改的话 `dirty` 恒为 true，保存按钮一直亮着而用户什么都没改。
+  savedContent.value = conflict.value?.currentContent ?? savedContent.value;
+  clearConflictState();
+}
+
+function clearConflictState() {
+  clearConflict();
+  conflictDraft.value = null;
+}
+
 
 function goRead() {
   router.replace({
@@ -591,6 +701,40 @@ onBeforeUnmount(() => {
       文档不存在
     </div>
     <div v-else-if="isEdit" class="workspace-edit flex min-h-0 flex-1 flex-col gap-3">
+      <!--
+        冲突提示条：常驻在编辑区顶部，不用 toast。
+        toast 3 秒后消失，而这条信息要在「去读最新正文 → 回来合并 → 再保存」
+        整个过程中一直在场 —— 那过程短则几十秒，长则几分钟。
+      -->
+      <AppAlert v-if="conflict" severity="warning">
+        <div class="flex flex-col gap-2">
+          <p class="font-medium">{{ conflictText }}</p>
+          <p class="text-xs opacity-80">
+            你这一版没有保存，对方的版本已经生效。请对照合并后重新保存 ——
+            服务端不做自动合并，直接重试会用同一个旧版本再失败一次。
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn btn-xs btn-primary" @click="reloadAfterConflict">
+              加载最新版本（我的草稿会保留）
+            </button>
+            <button
+              v-if="conflictDraft !== null"
+              type="button"
+              class="btn btn-xs"
+              @click="restoreConflictDraft"
+            >
+              改用我的草稿
+            </button>
+            <button v-if="conflictDraft !== null" type="button" class="btn btn-xs btn-ghost" @click="clearConflictState">
+              知道了
+            </button>
+          </div>
+          <p v-if="conflictDraft !== null" class="text-xs opacity-70">
+            你的草稿已暂存（{{ conflictDraft.length }} 字符）；当前编辑器里是对方的最新正文。
+          </p>
+        </div>
+      </AppAlert>
+
       <div v-if="!isSystem" class="grid gap-3 md:grid-cols-2">
         <AppField label="标题" html-for="doc-title">
           <input

@@ -901,7 +901,7 @@ chunsun dependency unlock <requirement|defect> <ID>         # 模拟节点完成
 chunsun knowledge index                             # 知识目录（元信息，不含正文）
 chunsun knowledge doc <ID>                          # 单条查询正文（文档 ID 或 constitution）
 chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]
-chunsun knowledge update <ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]`,
+chunsun knowledge update <ID> --revision <版本> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]`,
           },
           {
             t: "note",
@@ -951,13 +951,13 @@ chunsun knowledge update <ID> [--title <标题>] [--content <正文>] [--strateg
           {
             t: "code",
             lang: "bash",
-            code: `chunsun memory get                          # 拉取 / 审计项目记忆
-chunsun memory put --snapshot '<完整 Markdown>'   # 全量覆盖写回`,
+            code: `chunsun memory get                          # 拉取 / 审计项目记忆（输出当前版本）
+chunsun memory put --revision <版本> --snapshot '<完整 Markdown>'   # 全量覆盖写回`,
           },
           {
             t: "note",
             kind: "warn",
-            text: "put 为全量覆盖：先 get 再修改再 put，不要只追加不读旧内容。",
+            text: "put 为全量覆盖：先 get 再修改再 put，不要只追加不读旧内容。--revision 传 get 输出的版本号（该行还不存在时传 0）；版本对不上返回 409，用报文里的最新正文合并后重写。",
           },
           {
             t: "h2",
@@ -995,7 +995,7 @@ chunsun memory put --snapshot '<完整 Markdown>'   # 全量覆盖写回`,
           {
             t: "code",
             lang: "bash",
-            code: `chunsun init                  # 接入：绑定仓库 + 安装 Agent 能力
+            code: `chunsun init                  # 接入：绑定仓库 + 安装 Agent 技能
 chunsun repo list|register       # 仓库绑定管理
 chunsun requirement …         # list | create | show | update
 chunsun defect …              # list | create | show | update | delete | convert-to-requirement
@@ -1003,10 +1003,10 @@ chunsun run …                 # list | start | takeover | status | remind
 chunsun step add|list         # 上报 / 查看执行步骤
 chunsun scenario …            # list | upsert | status
 chunsun case …                # list | upsert | status
-chunsun requirement memory get|put <需求ID>  # 需求工作记忆（自由 Markdown，全量覆盖）
-chunsun memory get|put        # 项目级记忆（跨需求沉淀，属知识库）
+chunsun requirement memory get|put <需求ID> --revision <版本>  # 需求工作记忆（自由 Markdown，全量覆盖）
+chunsun memory get|put --revision <版本>  # 项目级记忆（跨需求沉淀，属知识库）
 chunsun dependency …          # list | schedule | blocked | unlock
-chunsun knowledge …           # [--json] 概览 | doc | index | create | update
+chunsun knowledge …           # [--json] 概览 | doc | index | create | update --revision <版本>
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付
 chunsun env list|get          # 项目环境变量（实时）
@@ -1024,6 +1024,24 @@ chunsun update                # 检查并更新 CLI 到最新版本`,
               ["run takeover", "接管僵尸轮次后开新轮次"],
               ["run status --status …", "轮次状态迁移（completed / finished / abandoned）"],
               ["run remind", "输出当前未满足的柔性约束"],
+            ],
+          },
+          {
+            t: "h2",
+            text: "写入冲突（乐观锁）",
+          },
+          {
+            t: "p",
+            text: "知识文档、项目宪法、项目记忆与需求工作记忆都是「整篇覆盖」写入。为避免多人（或多会话）同时改同一份内容时静默丢失，这四处写入都带版本号校验：读命令输出当前版本，写命令必须用 --revision 回传，版本对不上返回 409 并附上最新正文。",
+          },
+          {
+            t: "table",
+            head: ["情况", "处理"],
+            rows: [
+              ["--revision 传什么", "读命令输出的「版本」；--json 里是 revision 字段。该行还不存在时传 0"],
+              ["--revision 缺失", "400 MISSING_REVISION（必填，不做任何兜底猜测）"],
+              ["409 …_CONFLICT", "用报文里的最新正文合并你的改动，再用 currentRevision 重写；加 --json 可看全文"],
+              ["重试上限", "最多 2 次，仍冲突则停下并交给用户决策，不要无限重试"],
             ],
           },
           {

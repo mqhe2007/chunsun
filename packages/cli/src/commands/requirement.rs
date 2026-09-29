@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::api::ApiClient;
-use crate::commands::{print_json, CmdError, CmdResult};
+use crate::commands::{print_conflict, print_json, CmdError, CmdResult};
 use crate::config::load_config;
 
 #[derive(Args)]
@@ -75,6 +75,10 @@ enum MemoryAction {
         /// snapshot Markdown 字符串，例如 '## 需求边界\n...'
         #[arg(long)]
         snapshot: String,
+        /// 乐观锁版本号：**必填**。取自 `requirement memory get` 输出的「版本」或 --json 的 revision。
+        /// 该需求尚无工作记忆时传 0。
+        #[arg(long)]
+        revision: i64,
         #[arg(long)]
         json: bool,
     },
@@ -125,6 +129,10 @@ struct RequirementMemoryRow {
     #[allow(dead_code)]
     project_id: String,
     snapshot: Option<String>,
+    /// 乐观锁版本号。同知识文档 / 项目记忆：`default` 是**兼容旧后端**用的 ——
+    /// 缺字段时退化成 0，写回会拿到一个指得准的错误，而不是解析失败。
+    #[serde(default)]
+    revision: i64,
     updated_at: String,
 }
 
@@ -169,6 +177,7 @@ fn run_memory_get(req: String, json: bool) -> CmdResult {
             println!("需求: {}", data.requirement_id);
             println!("Memory: {}", data.id);
             println!("更新: {}", data.updated_at);
+            println!("版本（写回时传 --revision）: {}", data.revision);
             println!("snapshot:");
             match &data.snapshot {
                 Some(text) if !text.is_empty() => println!("{text}"),
@@ -194,13 +203,20 @@ fn run_memory_get(req: String, json: bool) -> CmdResult {
     }
 }
 
-fn run_memory_put(req: String, snapshot_raw: String, json: bool) -> CmdResult {
+fn run_memory_put(req: String, snapshot_raw: String, revision: i64, json: bool) -> CmdResult {
     let config = load_config();
     let api = ApiClient::new(&config)?;
     let path = memory_path(&config.project_id, &req);
 
-    let result: MemoryResponse =
-        api.put(&path, json!({ "snapshot": snapshot_raw }))?;
+    let result: MemoryResponse = match api.put(
+        &path,
+        json!({ "snapshot": snapshot_raw, "revision": revision }),
+    ) {
+        Ok(r) => r,
+        // 409 不走 `?`：Display 那一行里没有 currentRevision / currentSnapshot。
+        Err(e) if e.code() == Some("MEMORY_CONFLICT") => return Err(print_conflict(&e)),
+        Err(e) => return Err(e.into()),
+    };
     if !result.success {
         return Err(CmdError::new(
             result.error.unwrap_or_else(|| "写入工作记忆失败".into()),
@@ -215,6 +231,8 @@ fn run_memory_put(req: String, snapshot_raw: String, json: bool) -> CmdResult {
     }
     println!("[chunsun] 工作记忆已写入：{}", data.requirement_id);
     println!("  更新: {}", data.updated_at);
+    // 写后即给新版本号：一轮里分段补记是常见动作，少了这行就要重新 get。
+    println!("  新版本（下次 --revision）: {}", data.revision);
     let chars = data.snapshot.as_ref().map(|s| s.chars().count()).unwrap_or(0);
     println!("  字符数: {chars}");
     Ok(())
@@ -247,7 +265,12 @@ pub fn run(args: RequirementArgs) -> CmdResult {
     match args.command {
         RequirementCmd::Memory { action } => match action {
             MemoryAction::Get { req, json } => run_memory_get(req, json),
-            MemoryAction::Put { req, snapshot, json } => run_memory_put(req, snapshot, json),
+            MemoryAction::Put {
+                req,
+                snapshot,
+                revision,
+                json,
+            } => run_memory_put(req, snapshot, revision, json),
         },
         RequirementCmd::List {
             status,

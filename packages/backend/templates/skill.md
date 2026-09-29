@@ -100,7 +100,9 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
         批注只作用于目标文档，不跨文档扩散。stale 仅表示原锚点失效，仍须结合
         批注正文与当前文档判断，不得跳过
      b. 评审结论二选一：
-        - 接受：用 `chunsun knowledge update <docRef> --content '<完整正文>'` 修改目标文档
+        - 接受：`chunsun knowledge doc <docRef> --json` 取当前正文与 revision，改完后用
+          `chunsun knowledge update <docRef> --revision <刚读到的> --content '<完整正文>'` 写回
+          （冲突处理见「Memory」节的「乐观锁」）
         - 不采纳：保留正文，并形成明确、可核查的理由
      c. 上报 reflect Step，summary 写明「批注 ID / 评审结论 / 文档改动或不采纳理由」
      d. `chunsun knowledge annotation resolve <批注ID> --outcome addressed|dismissed --note '<依据>'`
@@ -110,7 +112,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
      a. chunsun dependency blocked requirement <ID>  查询本需求是否被阻塞
      b. 若被阻塞（blocked=true）：
         - 不进入执行队列；把阻塞原因与未完成前置列表写入工作记忆
-          （requirement memory put <ID> --snapshot '{"dependencySnapshot":{...}}'）
+          （requirement memory put <ID> --revision <版本号，无则 0> --snapshot '{"dependencySnapshot":{...}}'）
         - chunsun run status <ID> --status finished --reason "被前置任务阻塞：<前置列表>"，停
         - 向用户展示阻塞原因与前置任务，等待前置完成后再次触发技能
      c. 未被阻塞才继续执行
@@ -212,9 +214,25 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 
 **写入流程（拉取-修改-保存）**：
 
-1. `chunsun requirement memory get <ID>` 拉取当前记忆
+1. `chunsun requirement memory get <ID>` 拉取当前记忆，记下输出里的**版本号**（`revision`）
 2. 在本地修改 Markdown 文本（更新章节、追加内容、精简旧内容）
-3. `chunsun requirement memory put <ID> --snapshot '<完整 Markdown>'` 全量覆盖保存
+3. `chunsun requirement memory put <ID> --revision <版本号> --snapshot '<完整 Markdown>'` 全量覆盖保存
+
+**乐观锁（必读）**：所有整篇覆盖的写入（需求记忆 / 项目记忆 / 知识文档 / 宪法）都带版本号，**`--revision` 是必填参数**：
+
+- 版本号从**读取**里拿：`memory get` 输出的「版本」、`knowledge doc` 输出的「版本」。
+- 该行**尚不存在**时传 `0`（首次写某需求的工作记忆、首次写项目宪法/项目记忆）。
+- 写入成功后输出里会给出**新**版本号，连续编辑可直接用，不必再读一次。
+- **绝不猜版本号、绝不照着上一次的写**。写失败时见下面的冲突处理。
+
+**冲突处理（409 `*_CONFLICT`）**：说明你读取之后、写入之前，别人（另一个人、另一个会话、另一个 Agent）改过这一行了。
+
+1. 重新拉取（`memory get` / `knowledge doc --json`）拿到**最新正文**与**当前版本号**；
+2. 把你本轮的改动**合并到最新正文上**（不是把你的旧版本整篇盖回去）；
+3. 用新的 `--revision` **重写一次**。
+4. **最多重试 2 次**。连续 2 次仍冲突 → 停手，走 `ask_user` 说明「该文档正被频繁修改」，请用户决定由谁写。**不要无限重试**——那会把双方都拖进活锁，而且每次重试都可能覆盖掉对方刚写的关键内容。
+
+冲突时的输出不含全文正文（可能极长），需要全文用 `--json` 从 `data.currentContent`（记忆为 `currentSnapshot`）读取。
 
 **写入时机（强制）**：
 
@@ -231,7 +249,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 需求级「工作记忆」管**单个需求**的断点续跑；**项目级记忆**管**跨需求复用**的填坑、经验、沉淀——一次踩坑、一个决策、一条规范，值得其他需求也看到时，记进项目记忆。
 
 - **存储**：每项目一份（1:1），自由 Markdown 文本；属于项目知识库之一（`chunsun knowledge index` 固定展示 `key=memory` 的 system 条目，恒 eager）；**仅可编辑不可删除**（无删除端点）。
-- **命令**：`chunsun memory get`（拉取 / 审计，含 `--json`）/ `chunsun memory put --snapshot '<完整 Markdown>'`（全量覆盖写回）。
+- **命令**：`chunsun memory get`（拉取 / 审计，含 `--json`）/ `chunsun memory put --revision <版本号> --snapshot '<完整 Markdown>'`（全量覆盖写回）。版本号取自 `memory get` 输出，无记忆时传 `0`；冲突处理见上文「乐观锁」节。
 - **容量**：与需求工作记忆统一，上限 10k 字符（超限平台拒绝 `MEMORY_TOO_LARGE`；接近上限主动精简旧条目，如把早期条目压缩为一行）。
 - **记录时机**（柔性约束，遇以下情形随手沉淀，不用等收尾）：
   1. 循环中踩坑 / 发现可复用经验 → 随手 append 一条（`## 填坑记录` / `## 经验沉淀` 等章节）；
@@ -315,8 +333,10 @@ chunsun run start|takeover|status|list|remind <需求ID>
 chunsun step add <需求ID> --run <runId> --kind <think|code|test|verify|ask_user|info|reflect> --summary <...>
 chunsun scenario list|upsert|status
 chunsun case list|upsert|status
-chunsun requirement memory get|put <需求ID>
-chunsun memory get|put                                     # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）
+chunsun requirement memory get <需求ID>                      # 输出含版本号（写回用）
+chunsun requirement memory put <需求ID> --revision <N> --snapshot '<Markdown>'
+chunsun memory get                                         # 项目级记忆（跨需求填坑/经验，属知识库；输出含版本号）
+chunsun memory put --revision <N> --snapshot '<Markdown>'   # 写回项目级记忆（--revision 必填，无则传 0）
 chunsun dependency list|schedule                                  # 依赖边 / 全项目调度分析
 chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
 chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析
@@ -324,7 +344,7 @@ chunsun knowledge [--json]                                    # 项目知识概�
 chunsun knowledge doc <文档ID|constitution|memory> [--json]    # 深读单篇正文与完整未处理批注
 chunsun knowledge annotation list|resolve|reopen               # 全局发现 / 结案 / 重开批注
 chunsun knowledge create --title <标题> [--content <正文>] [--strategy eager|lazy]  # 创建知识文档（保持不支持删除）
-chunsun knowledge update <文档ID> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]  # 更新知识文档（保持不支持删除）
+chunsun knowledge update <文档ID> --revision <N> [--title <标题>] [--content <正文>] [--strategy eager|lazy] [--sort-order <N>]  # 更新知识文档（保持不支持删除；--revision 必填）
 chunsun reset <需求ID>
 chunsun fix <缺陷ID>
 ```

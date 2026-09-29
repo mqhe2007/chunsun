@@ -88,7 +88,7 @@ pnpm run platform:release -- linux-x64
 # 根目录 .env
 CHUNSUN_SECRET_KEY=sk_xxx
 
-chunsun init         # 校验密钥 → 绑定仓库 → 按所选 Agent 安装技能/命令/规则
+chunsun init         # 校验密钥 → 绑定仓库 → 按所选 Agent 安装技能
 ```
 
 ### 4. 发起第一次自主交付
@@ -144,10 +144,10 @@ chunsun run …                 # list | start | takeover | status | remind   �
 chunsun step add|list         # 上报/查看执行步骤
 chunsun scenario …            # list | upsert | status                     （验收场景）
 chunsun case …                # list | upsert | status                     （验收用例）
-chunsun requirement memory get|put  # 需求工作记忆（Memory）
-chunsun memory get|put        # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）
+chunsun requirement memory get|put  # 需求工作记忆（Memory）；put 需 --revision <版本>（无记忆传 0）
+chunsun memory get|put        # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）；put 需 --revision
 chunsun dependency …          # list | schedule | blocked | unlock   （依赖调度）
-chunsun knowledge …           # 概览（--strategy eager|lazy）| doc | index | create | update（项目知识，不支持删除）
+chunsun knowledge …           # 概览（--strategy eager|lazy）| doc | index | create | update（项目知识，不支持删除；update 需 --revision）
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付（/chunsun-fix）
 chunsun env list|get          # 项目环境变量（实时；本地优先，不同步落盘）

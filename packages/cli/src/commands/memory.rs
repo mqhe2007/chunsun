@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::api::ApiClient;
-use crate::commands::{print_json, CmdError, CmdResult};
+use crate::commands::{print_conflict, print_json, CmdError, CmdResult};
 use crate::config::load_config;
 
 #[derive(Args)]
@@ -24,6 +24,10 @@ enum MemoryCmd {
         /// snapshot Markdown 字符串，例如 '## 填坑记录\n- ...'
         #[arg(long)]
         snapshot: String,
+        /// 乐观锁版本号：**必填**。取自 `memory get` 输出的「版本」或 --json 的 revision。
+        /// 尚无项目记忆时传 0。
+        #[arg(long)]
+        revision: i64,
         #[arg(long)]
         json: bool,
     },
@@ -35,6 +39,10 @@ struct ProjectMemoryRow {
     id: String,
     project_id: String,
     snapshot: Option<String>,
+    /// 乐观锁版本号。`#[serde(default)]` 的理由与知识文档那边相同（兼容旧后端：
+    /// 缺字段时退化成 0，写回会拿到一个指得准的错误，而不是「解析响应失败」）。
+    #[serde(default)]
+    revision: i64,
     updated_at: String,
 }
 
@@ -80,6 +88,7 @@ fn run_memory_get(json: bool) -> CmdResult {
             }
             println!("项目记忆: {}", data.id);
             println!("更新: {}", data.updated_at);
+            println!("版本（写回时传 --revision）: {}", data.revision);
             println!("snapshot:");
             match &data.snapshot {
                 Some(text) if !text.is_empty() => println!("{text}"),
@@ -98,12 +107,21 @@ fn run_memory_get(json: bool) -> CmdResult {
     }
 }
 
-fn run_memory_put(snapshot_raw: String, json: bool) -> CmdResult {
+fn run_memory_put(snapshot_raw: String, revision: i64, json: bool) -> CmdResult {
     let config = load_config();
     let api = ApiClient::new(&config)?;
     let path = memory_path(&config.project_id);
 
-    let result: MemoryResponse = api.put(&path, json!({ "snapshot": snapshot_raw }))?;
+    let result: MemoryResponse = match api.put(
+        &path,
+        json!({ "snapshot": snapshot_raw, "revision": revision }),
+    ) {
+        Ok(r) => r,
+        // 409 不走 `?`：`From<ApiError> for CmdError` 只留一行 Display 文本，
+        // 而冲突的关键信息（currentRevision / currentSnapshot）全在 data 里。
+        Err(e) if e.code() == Some("MEMORY_CONFLICT") => return Err(print_conflict(&e)),
+        Err(e) => return Err(e.into()),
+    };
     if !result.success {
         return Err(CmdError::new(
             result.error.unwrap_or_else(|| "写入项目记忆失败".into()),
@@ -118,6 +136,9 @@ fn run_memory_put(snapshot_raw: String, json: bool) -> CmdResult {
     }
     println!("[chunsun] 项目记忆已写入：{}", data.project_id);
     println!("  更新: {}", data.updated_at);
+    // 写后即给新版本号：`memory put` 之后紧接着再 put 一次是常见动作
+    // （分两段补充记录），少了这一行就要重新 get 一次。
+    println!("  新版本（下次 --revision）: {}", data.revision);
     let chars = data.snapshot.as_ref().map(|s| s.chars().count()).unwrap_or(0);
     println!("  字符数: {chars}");
     Ok(())
@@ -126,6 +147,10 @@ fn run_memory_put(snapshot_raw: String, json: bool) -> CmdResult {
 pub fn run(args: MemoryArgs) -> CmdResult {
     match args.command {
         MemoryCmd::Get { json } => run_memory_get(json),
-        MemoryCmd::Put { snapshot, json } => run_memory_put(snapshot, json),
+        MemoryCmd::Put {
+            snapshot,
+            revision,
+            json,
+        } => run_memory_put(snapshot, revision, json),
     }
 }

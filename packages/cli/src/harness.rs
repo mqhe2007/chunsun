@@ -744,7 +744,7 @@ mod tests {
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-09-20-knowledge-annotation-loop",
+            "2026-09-28-knowledge-optimistic-lock",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }
