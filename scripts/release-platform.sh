@@ -82,7 +82,17 @@ echo "[release] 3/3 构建平台二进制: ${ALIASES[*]}"
 for alias in "${ALIASES[@]}"; do
   triple="$(platform_triple "$alias")"
   echo "[release] 编译平台 ($alias → $triple)…"
-  cargo zigbuild --release --target "$triple" --manifest-path "$BE_MANIFEST"
+  # `CARGO_PROFILE_RELEASE_STRIP=false` + `-C strip=symbols`：只 strip 最终二进制。
+  #
+  # 不能沿用 Cargo.toml 里的 `[profile.release] strip = true`。proc-macro 是**按宿主平台**
+  # 编译成动态库再被 rustc dlopen 的，rustc 1.95 的 strip 会在 macOS 上把它写坏：
+  #   libsqlx_macros-*.dylib: mis-aligned LINKEDIT string pool
+  # sqlx 的 proc-macro 体积大才暴露，CLI（clap/serde derive）签名轻、照样编得过，
+  # 所以这个坑只在后端构建上炸。产物本身没问题，是宿主侧的 dylib 被 strip 坏了。
+  # 交叉编译也一样中招（proc-macro 仍是宿主 dylib）。
+  CARGO_PROFILE_RELEASE_STRIP=false \
+    RUSTFLAGS="${RUSTFLAGS:-} -C strip=symbols" \
+    cargo zigbuild --release --target "$triple" --manifest-path "$BE_MANIFEST"
 
   artifact="$(platform_artifact_name "$alias")"
   if [[ "$alias" == windows-x64 ]]; then
