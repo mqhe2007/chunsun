@@ -28,6 +28,21 @@ const SCENARIO_COLS: &str =
 const CASE_COLS: &str = "id, requirement_id, project_id, scenario_id, title, kind::text AS kind, steps, expected, local_path, execution_plan::text AS execution_plan, status::text AS status, actual_result, executed_at, executed_by::text AS executed_by, sort_order, created_at, updated_at";
 const MEMORY_COLS: &str = "id, requirement_id, project_id, snapshot, revision, updated_at";
 
+/// `upsert_memory` 建行时的插入语句。
+///
+/// 提成常量是为了让 `memory_insert_sql_is_pinned` 能直接断言它：这条 SQL 曾经把
+/// 仲裁目标写成 `(requirement_id, project_id)`，而表上唯一的唯一索引
+/// （baseline 的 `context_requirement_id_key`，表从 `context` 改名而来）是
+/// **单列 requirement_id**。Postgres 的仲裁索引推断要求列集合与某个唯一索引
+/// 完全一致，多列少列都不认，于是首次写入直接抛 42P10
+/// 「no unique or exclusion constraint matching the ON CONFLICT specification」，
+/// 在路由层就是 500。纯函数测试挡不住这种错，只能把 SQL 本身钉住。
+const MEMORY_INSERT_SQL: &str = "INSERT INTO requirement_memory \
+     (id, requirement_id, project_id, snapshot, revision, updated_at) \
+     VALUES ($1, $2, $3, $4, 1, NOW()) \
+     ON CONFLICT (requirement_id) DO NOTHING \
+     RETURNING id, requirement_id, project_id, snapshot, revision, updated_at";
+
 // ---------- Row structs ----------
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -692,16 +707,9 @@ pub async fn upsert_memory(
     }
 
     // 并发下两个请求可能同时走到这里，`ON CONFLICT` 兜住后者。
-    // 唯一约束是 (requirement_id, project_id) —— baseline 里名为 `context_requirement_id_key`
-    // （表从 `context` 改名而来），这里按列写而不是按约束名，改名不影响。
     {
         let id = nanoid(12);
-        let inserted = sqlx::query_as::<_, MemoryRow>(&format!(
-            "INSERT INTO requirement_memory (id, requirement_id, project_id, snapshot, revision, updated_at) \
-             VALUES ($1, $2, $3, $4, 1, NOW()) \
-             ON CONFLICT (requirement_id, project_id) DO NOTHING \
-             RETURNING {MEMORY_COLS}"
-        ))
+        let inserted = sqlx::query_as::<_, MemoryRow>(MEMORY_INSERT_SQL)
         .bind(&id)
         .bind(requirement_id)
         .bind(project_id)
@@ -1276,5 +1284,35 @@ mod tests {
         let e = run_already_running();
         assert_eq!(e.code, "RUN_ALREADY_RUNNING");
         assert_eq!(e.status, 409);
+    }
+
+    /// 建行 SQL 的两处硬约束，一次钉死。
+    ///
+    /// **一、仲裁目标必须是单列 `requirement_id`。** 表上唯一的唯一索引是 baseline
+    /// 建的 `context_requirement_id_key`（表从 `context` 改名，索引名跟着留下），
+    /// 单列。Postgres 的仲裁索引推断要求列集合与某个唯一索引**完全一致**，多一列
+    /// 就够不上。曾经这里写的是 `(requirement_id, project_id)`，于是
+    /// 「行不存在 + revision=0」这条**首次写入**路径稳定抛 42P10 → 500，
+    /// 而更新已有行的路径完全正常 —— 故障因此长得像「某些需求写不进去」，
+    /// 而不是「这个接口坏了」。
+    ///
+    /// **二、revision 必须硬编码为 1。** `0` 在客户端侧是「我认为这行还不存在」
+    /// 的意图表达，只用于触发建行；落进库里会让下一个用 0 建行的调用方与真实
+    /// 版本号错开一格，乐观锁第一次比较就误判。
+    #[test]
+    fn memory_insert_sql_is_pinned() {
+        assert!(
+            MEMORY_INSERT_SQL.contains("ON CONFLICT (requirement_id) DO NOTHING"),
+            "仲裁目标必须是单列 requirement_id，与 context_requirement_id_key 对齐"
+        );
+        // 反向确认：两列写法必须不在其中 —— 这正是本次回归的原始形态
+        assert!(
+            !MEMORY_INSERT_SQL.contains("requirement_id, project_id)"),
+            "两列仲裁目标够不上任何唯一索引，会在首次写入时抛 42P10"
+        );
+        assert!(
+            MEMORY_INSERT_SQL.contains("VALUES ($1, $2, $3, $4, 1, NOW())"),
+            "建行必须显式把 revision 写成 1"
+        );
     }
 }
