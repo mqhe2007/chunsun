@@ -237,7 +237,8 @@ export const docCategories: DocCategory[] = [
           {
             t: "ul",
             items: [
-              "Cursor、Trae、Qoder、CodeBuddy、Claude Code、WorkBuddy、Agents：安装技能到各自 IDE 目录。",
+              "Cursor、Trae、Qoder、CodeBuddy、Claude Code、WorkBuddy：安装技能到各自 IDE 目录。",
+              "ChatGPT 桌面端 / Codex / Agents：共用 .agents/skills/chunsun/，命令为 chunsun init --ide chatgpt（codex、agents 同样可用）。",
               "历史版本装过的斜线命令与常驻规则文件，升级时自动迁移清理。",
             ],
           },
@@ -255,7 +256,7 @@ export const docCategories: DocCategory[] = [
           {
             t: "note",
             kind: "info",
-            text: "技能触发即分析意图：说「开始需求 <ID>」「修复缺陷 <ID>」或用 /chunsun 调出技能均可，由技能自动路由到交付 / 修复 / 查询流程。",
+            text: "技能触发即分析意图：说「开始需求 <ID>」「修复缺陷 <ID>」即可。显式选择时，ChatGPT 用 @chunsun，Codex 用 $chunsun 或 /skills，其它 Agent 按宿主支持的方式选择（例如 /chunsun）。安装后未显示时，重启客户端。",
           },
         ],
       },

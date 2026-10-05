@@ -11,7 +11,7 @@ use crate::commands::{CmdError, CmdResult};
 use crate::config::load_config;
 use crate::harness::install_skill_workspace_from_api;
 use crate::ide::{
-    default_ide_target, get_ide_target, IdeTarget, DEFAULT_IDE_ID, IDE_TARGETS,
+    default_ide_target, get_ide_target, IdeId, IdeTarget, DEFAULT_IDE_ID, IDE_TARGETS,
 };
 
 #[derive(Args)]
@@ -19,7 +19,7 @@ pub struct InitArgs {
     /// 强制覆盖已有技能文件（模板版本变更时即使不加 -f 也会自动刷新）
     #[arg(short = 'f', long)]
     force: bool,
-    /// 目标 IDE；省略时在终端交互式选择，非交互环境默认 cursor
+    /// 目标 IDE / Agent（ChatGPT / Codex 用 chatgpt 或 codex）；省略时交互式选择，非交互环境默认 cursor
     #[arg(long)]
     ide: Option<String>,
 }
@@ -215,7 +215,7 @@ pub fn resolve_ide_for_init(
         .position(|t| t.id == DEFAULT_IDE_ID)
         .unwrap_or(0);
     let selected = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("选择目标 IDE（决定技能安装目录）：")
+        .with_prompt("选择目标 IDE / Agent（决定技能安装目录）：")
         .default(default_idx)
         .items(&labels)
         .interact()
@@ -315,7 +315,7 @@ pub fn run(args: InitArgs) -> CmdResult {
         repository.name, repository.slug
     );
     println!("[chunsun] {repository_action}");
-    println!("[chunsun] 目标 IDE：{}", ide.label);
+    println!("[chunsun] 目标 IDE / Agent：{}", ide.label);
     println!(
         "[chunsun] Agent 技能已就绪：{}/SKILL.md",
         result.skill_root.display()
@@ -342,8 +342,13 @@ pub fn run(args: InitArgs) -> CmdResult {
             result.reused.len()
         );
     }
+    let invocation = if ide.id == IdeId::Agents {
+        "ChatGPT 用 `@chunsun`，Codex 用 `$chunsun` 或 `/skills`"
+    } else {
+        "用 `/chunsun`"
+    };
     println!(
-        "[chunsun] 下一步：在 chat 中说「开始需求 <需求ID>」「修复缺陷 <缺陷ID>」等，或用 `/chunsun` 调出技能——技能会自动分析意图路由。"
+        "[chunsun] 下一步：在 chat 中说「开始需求 <需求ID>」「修复缺陷 <缺陷ID>」等，或{invocation} 调出技能——技能会自动分析意图路由。"
     );
     Ok(())
 }

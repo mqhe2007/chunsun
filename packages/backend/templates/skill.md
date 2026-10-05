@@ -12,7 +12,7 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 
 ## 意图路由（触发即分析）
 
-用户可能以自然语言或 `/chunsun`、`/chunsun-fix` 等方式调出本技能（各家 Agent 的技能均支持 "/" 调出，历史斜线命令名仍可识别）。触发后**先分析用户输入意图，再路由到对应流程**：
+用户可以用自然语言触发本技能，也可显式选择：ChatGPT 用 `@chunsun`，Codex 用 `$chunsun` 或 `/skills`，其它 Agent 按宿主支持的方式选择（例如 `/chunsun`）。历史输入 `/chunsun-fix` 仍可识别。触发后**先分析用户输入意图，再路由到对应流程**：
 
 | 用户意图（示例） | 路由 |
 | --- | --- |

@@ -130,7 +130,11 @@ fn read_version_at(cwd: &Path, ide: &IdeTarget) -> Option<String> {
 }
 
 pub fn is_skill_template_stale(cwd: &Path, remote_version: &str) -> bool {
-    read_installed_template_version(cwd).as_deref() != Some(remote_version)
+    let targets = detect_installed_ide_targets(cwd);
+    targets.is_empty()
+        || targets
+            .iter()
+            .any(|ide| read_version_at(cwd, ide).as_deref() != Some(remote_version))
 }
 
 fn path_exists(p: &Path) -> bool {
@@ -205,7 +209,7 @@ pub fn install_skill_workspace(
     let mut written = Vec::new();
     let mut cleaned = Vec::new();
     let skill_root = cwd.join(ide.skills_dir).join("chunsun");
-    let previous_version = read_installed_template_version(cwd);
+    let previous_version = read_version_at(cwd, ide);
     let refreshed =
         force || previous_version.as_deref() != Some(bundle.template_version.as_str());
 
@@ -236,9 +240,9 @@ pub fn install_skill_workspace(
     }
 
     // 迁移清理：历史版本装在各 IDE 目录下的斜线命令与常驻规则、
-    // 旧 `.agents` 布局，以及 AGENTS.md / CLAUDE.md 桥接段落。
+    // AGENTS.md / CLAUDE.md 桥接段落。
     // harness 不再管理这些文件，装完即清理（幂等：不存在则无操作）。
-    cleanup_legacy_harness_files(cwd, ide, &mut cleaned);
+    cleanup_legacy_harness_files(cwd, &mut cleaned);
 
     Ok(InstallSkillWorkspaceResult {
         skill_root,
@@ -367,26 +371,9 @@ fn cleanup_legacy_commands_and_rules(cwd: &Path, cleaned: &mut Vec<String>) {
     }
 }
 
-/// 移除旧版 `.agents` 布局下 chunsun 自有的技能目录（迁移到 IDE 专属 skills 目录后不再维护）。
-///
-/// 仅当安装目标不是 `.agents` 时清理（目标即 Agents 时为合法安装产物）；
-/// `.agents` 下的 commands / rules 由 `cleanup_legacy_commands_and_rules` 统一处理。
-fn cleanup_legacy_agents_skills(cwd: &Path, cleaned: &mut Vec<String>) {
-    let legacy_skill = cwd.join(".agents").join("skills").join("chunsun");
-    if legacy_skill.exists() {
-        let _ = fs::remove_dir_all(&legacy_skill);
-        cleaned.push(".agents/skills/chunsun".to_string());
-    }
-    remove_dir_if_empty(&cwd.join(".agents").join("skills"));
-    remove_dir_if_empty(&cwd.join(".agents"));
-}
-
-/// 迁移清理总入口：历史斜线命令 / 常驻规则 / `.agents` 技能旧布局 / AGENTS.md·CLAUDE.md 桥接。
-pub fn cleanup_legacy_harness_files(cwd: &Path, ide: &IdeTarget, cleaned: &mut Vec<String>) {
+/// 迁移清理总入口：历史斜线命令 / 常驻规则 / AGENTS.md·CLAUDE.md 桥接。
+pub fn cleanup_legacy_harness_files(cwd: &Path, cleaned: &mut Vec<String>) {
     cleanup_legacy_commands_and_rules(cwd, cleaned);
-    if ide.id != IdeId::Agents {
-        cleanup_legacy_agents_skills(cwd, cleaned);
-    }
     remove_bridge_file(cwd, "AGENTS.md", cleaned);
     remove_bridge_file(cwd, "CLAUDE.md", cleaned);
 }
@@ -566,10 +553,9 @@ mod tests {
         );
     }
 
-    /// 技能从 .agents 迁移到所选 IDE 的 skills 目录，并清理旧 .agents 布局
-    /// （skills + commands + rules 全部为遗留产物）。
+    /// 安装其它 IDE 时保留 ChatGPT / Codex 的技能，只清理旧命令与规则。
     #[test]
-    fn migrates_legacy_agents_to_ide_skills() {
+    fn preserves_agents_skills_when_installing_another_ide() {
         let dir = tempdir().unwrap();
         // 模拟旧版布局：.agents/ 下技能、斜线命令、门禁规则俱全
         let legacy_root = dir.path().join(".agents/skills/chunsun");
@@ -596,14 +582,17 @@ mod tests {
         install_skill_workspace(dir.path(), false, Some(default_ide_target()), &fixture_bundle())
             .unwrap();
 
-        // 新位置已写入，旧 .agents 三处 chunsun 产物均被清理
+        // 两个技能目录共存，旧命令与规则被清理
         assert!(dir.path().join(".cursor/skills/chunsun/SKILL.md").is_file());
         assert!(dir.path().join(".cursor/skills/chunsun/.template-version").is_file());
-        assert!(!legacy_root.exists(), "旧 .agents/skills/chunsun 应被移除");
+        assert_eq!(
+            fs::read_to_string(legacy_root.join("SKILL.md")).unwrap(),
+            "legacy skill",
+        );
         assert!(!legacy_commands.join("chunsun.md").exists());
         assert!(!legacy_commands.join("chunsun-fix.md").exists());
         assert!(!legacy_rules.join("chunsun-workflow-gates.md").exists());
-        assert!(!dir.path().join(".agents").exists(), ".agents 清空后应整体移除");
+        assert_eq!(detect_installed_ide_targets(dir.path()).len(), 2);
         assert_eq!(
             read_installed_template_version(dir.path()),
             Some(fixture_version())
@@ -739,12 +728,61 @@ mod tests {
         assert!(!legacy_rules.join("chunsun-workflow-gates.md").exists());
     }
 
+    #[test]
+    fn chatgpt_and_codex_share_agents_installation_and_refresh() {
+        let dir = tempdir().unwrap();
+        let mut bundle = fixture_bundle();
+        for id in ["chatgpt", "codex", "agents"] {
+            let target = crate::commands::init::resolve_ide_for_init(Some(id), false).unwrap();
+            assert_eq!(target.id, IdeId::Agents);
+            assert!(target.label.contains("ChatGPT"));
+            let result = install_skill_workspace(dir.path(), false, Some(target), &bundle).unwrap();
+            assert_eq!(result.skill_root, dir.path().join(".agents/skills/chunsun"));
+            for (path, content) in [
+                ("SKILL.md", &bundle.skill),
+                ("references/commands.md", &bundle.commands),
+                ("references/loop-rules.md", &bundle.loop_rules),
+            ] {
+                assert_eq!(
+                    fs::read_to_string(result.skill_root.join(path)).unwrap(),
+                    *content,
+                );
+            }
+            assert!(!result.cleaned.iter().any(|p| p == ".agents/skills/chunsun"));
+            assert_eq!(detect_installed_ide_targets(dir.path()).len(), 1);
+            assert_eq!(
+                read_installed_template_version(dir.path()),
+                Some(bundle.template_version.clone()),
+            );
+        }
+
+        let cursor = default_ide_target();
+        install_skill_workspace(dir.path(), false, Some(cursor), &bundle).unwrap();
+        assert_eq!(detect_installed_ide_targets(dir.path()).len(), 2);
+
+        bundle.template_version = "test-chatgpt-refresh".into();
+        bundle.skill = "updated skill".into();
+        install_skill_workspace(dir.path(), false, Some(cursor), &bundle).unwrap();
+        assert!(is_skill_template_stale(dir.path(), &bundle.template_version));
+        let mut refreshed = 0;
+        for target in detect_installed_ide_targets(dir.path()) {
+            let result = install_skill_workspace(dir.path(), false, Some(target), &bundle).unwrap();
+            refreshed += usize::from(result.refreshed);
+            assert_eq!(
+                fs::read_to_string(result.skill_root.join("SKILL.md")).unwrap(),
+                bundle.skill,
+            );
+        }
+        assert_eq!(refreshed, 1);
+        assert!(!is_skill_template_stale(dir.path(), &bundle.template_version));
+    }
+
     /// 夹具版本须与 backend templates/VERSION 一致（生产走实例接口，不再内嵌常量）。
     #[test]
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-09-28-knowledge-optimistic-lock",
+            "2026-10-05-chatgpt-skills",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }

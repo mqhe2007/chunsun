@@ -10,7 +10,7 @@
 
 <h1 align="center">春笋 · ChunSun</h1>
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v0.9.22-0F6E56" />
+  <img alt="version" src="https://img.shields.io/badge/version-v0.9.23-0F6E56" />
   <img alt="lang" src="https://img.shields.io/badge/lang-Rust%20%2F%20Vue-0F6E56" />
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS%20%2F%20Linux%20%2F%20Windows-0F6E56" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green" />
@@ -26,7 +26,7 @@
 - **自部署** —— 单二进制平台，PostgreSQL 即可运行；数据与密钥留在你的实例。
 - **项目管理** —— 以需求为唯一工作对象，轮次、验收场景、缺陷闭环统一收口。
 - **跨时空状态同步** —— 进度、决策、工作记忆在平台留存；换会话、换人、换 Agent 可续跑。
-- **多 Agent 支持** —— Cursor、Claude Code 等 8+ IDE，`chunsun init` 一键接入。
+- **多 Agent 支持** —— Cursor、Claude Code、ChatGPT（Codex）等，`chunsun init` 一键接入。
 
 > 此外还支持：团队密钥（Secret-safe）、双轨 RBAC、真实依赖验收、缺陷闭环等能力。
 
@@ -89,11 +89,15 @@ pnpm run platform:release -- linux-x64
 CHUNSUN_SECRET_KEY=sk_xxx
 
 chunsun init         # 校验密钥 → 绑定仓库 → 按所选 Agent 安装技能
+# ChatGPT 桌面端 / Codex（也可在交互菜单中选择）
+chunsun init --ide chatgpt  # --ide codex 同样可用
 ```
+
+ChatGPT / Codex 技能安装到当前仓库的 `.agents/skills/chunsun/`，复用原有 `--ide agents` 目录。该目录是[官方文档](https://learn.chatgpt.com/docs/build-skills)规定的本地技能发现位置；安装后未显示时，重启客户端。
 
 ### 4. 发起第一次自主交付
 
-在平台上录入一条需求，然后在 Agent 中运行斜线命令：
+在平台上录入一条需求，然后在 Agent 中说「开始需求 <需求ID>」，或显式选择技能：ChatGPT 用 `@chunsun`，Codex 用 `$chunsun` / `/skills`，支持斜线调用的 Agent 用：
 
 ```
 /chunsun <需求ID>       # 启动 / 继续 / 迭代一条需求

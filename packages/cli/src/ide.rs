@@ -9,8 +9,7 @@ pub enum IdeId {
     /// Claude Code（依据官方文档 code.claude.com/docs）：
     /// `.claude/skills/<name>/SKILL.md` 即注册同名技能（可 "/" 调出）。
     ClaudeCode,
-    /// Agents：通用 agent 无关目录 `.agents`（技能落在 `.agents/skills`），
-    /// 适用于希望把技能集中到 `.agents` 的通用 Agent 工作流。
+    /// ChatGPT / Codex 与通用 Agents 共用 `.agents/skills`。
     Agents,
 }
 
@@ -102,10 +101,10 @@ pub const IDE_TARGETS: &[IdeTarget] = &[
         rules_filename: "chunsun-workflow-gates.md",
         skills_dir: ".claude/skills",
     },
-    // Agents：通用 `.agents` 目录，技能落在 `.agents/skills/chunsun/`。
+    // 官方本地技能目录：https://learn.chatgpt.com/docs/build-skills
     IdeTarget {
         id: IdeId::Agents,
-        label: "Agents（.agents/skills）",
+        label: "ChatGPT / Codex / Agents（.agents/skills）",
         commands_dir: ".agents/commands",
         rules_dir: ".agents/rules",
         rules_filename: "chunsun-workflow-gates.md",
@@ -116,6 +115,10 @@ pub const IDE_TARGETS: &[IdeTarget] = &[
 pub const DEFAULT_IDE_ID: IdeId = IdeId::Cursor;
 
 pub fn get_ide_target(id: &str) -> Option<&'static IdeTarget> {
+    let id = match id {
+        "chatgpt" | "codex" => "agents",
+        id => id,
+    };
     IDE_TARGETS.iter().find(|t| t.id.as_str() == id)
 }
 

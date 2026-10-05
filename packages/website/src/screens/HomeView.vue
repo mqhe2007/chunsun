@@ -50,7 +50,7 @@ const supportedAgents = [
   { name: "CodeBuddy", logo: "/agents/codebuddy.svg" },
   { name: "WorkBuddy", logo: "/agents/workbuddy.svg" },
   { name: "Claude Code", logo: "/agents/claude-code.svg" },
-  { name: "Agents", logo: "/agents/agents.svg" },
+  { name: "ChatGPT / Codex / Agents", logo: "/agents/agents.svg" },
 ];
 
 type JourneyStep = {
