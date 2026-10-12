@@ -862,6 +862,21 @@ chunsun dependency unlock <requirement|defect> <ID>         # 模拟节点完成
             kind: "info",
             text: "schedule 输出全项目拓扑分层（同层可并行、层间串行）、关键路径与可执行集合，用于识别瓶颈、优先推进。",
           },
+          {
+            t: "h2",
+            text: "维护依赖",
+          },
+          {
+            t: "code",
+            lang: "bash",
+            code: `chunsun dependency add <sourceType> <sourceId> <targetType> <targetId>     # 添加边：source 阻塞 target
+chunsun dependency remove <sourceType> <sourceId> <targetType> <targetId>  # 移除边`,
+          },
+          {
+            t: "note",
+            kind: "info",
+            text: "依赖边可由人在 CLI / 控制台维护，Agent 也可在交付循环中登记发现缺失的依赖（人 + Agent 开放）。后端强制校验：节点不存在 404，自环 / 成环 409 DEPENDENCY_CYCLE。",
+          },
         ],
       },
       {
@@ -998,7 +1013,7 @@ chunsun memory put --revision <版本> --snapshot '<完整 Markdown>'   # 全量
             lang: "bash",
             code: `chunsun init                  # 接入：绑定仓库 + 安装 Agent 技能
 chunsun repo list|register       # 仓库绑定管理
-chunsun requirement …         # list | create | show | update
+chunsun requirement …         # list | create | show | update | delete（仅 pending/abandoned 可删）
 chunsun defect …              # list | create | show | update | delete | convert-to-requirement
 chunsun run …                 # list | start | takeover | status | remind
 chunsun step add|list         # 上报 / 查看执行步骤
@@ -1006,7 +1021,7 @@ chunsun scenario …            # list | upsert | status
 chunsun case …                # list | upsert | status
 chunsun requirement memory get|put <需求ID> --revision <版本>  # 需求工作记忆（自由 Markdown，全量覆盖）
 chunsun memory get|put --revision <版本>  # 项目级记忆（跨需求沉淀，属知识库）
-chunsun dependency …          # list | schedule | blocked | unlock
+chunsun dependency …          # list | schedule | blocked | unlock | add | remove（边维护对人 + Agent 开放）
 chunsun knowledge …           # [--json] 概览 | doc | index | create | update --revision <版本>
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付
@@ -1071,6 +1086,8 @@ chunsun update                # 检查并更新 CLI 到最新版本`,
               ["dependency schedule", "全项目调度分析：拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合"],
               ["dependency blocked <requirement|defect> <ID>", "单节点阻塞状态：是否被阻塞 + 原因（未完成前置）"],
               ["dependency unlock <requirement|defect> <ID>", "解锁分析：模拟节点完成后下游哪些解锁、哪些仍被阻塞"],
+              ["dependency add <sourceType> <sourceId> <targetType> <targetId>", "添加依赖边：source 阻塞 target（人 + Agent；成环/自环 409 拒绝）"],
+              ["dependency remove <sourceType> <sourceId> <targetType> <targetId>", "移除依赖边（参数同 add）"],
             ],
           },
           {

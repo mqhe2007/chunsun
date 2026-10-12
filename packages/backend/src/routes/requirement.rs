@@ -128,6 +128,12 @@ pub struct UpdateRequirementBody {
     pub released_at: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     pub owner_id: Option<Option<String>>,
+    /// 三态：不传 = 不触碰；null / 数组 = 「被谁阻塞」入边**全量替换**
+    /// （数组即目标全集，空数组清空；null 等价空数组，对齐 JS `?? []`）。
+    /// 每项 `{ kind: "requirement" | "defect", id }`；
+    /// 新增引用节点不存在 404，会成环 409 `DEPENDENCY_CYCLE`。
+    #[serde(default, deserialize_with = "double_option")]
+    pub blocked_by: Option<Option<Vec<BlockedByRefBody>>>,
 }
 
 // ── handlers ────────────────────────────────────────────────────────────
@@ -254,6 +260,23 @@ async fn update(
     // （对齐 `new Date()` 不抛错、且 record-not-found 先于落库报错），故不在路由层解析。
     let released_at = nullable_optional_string("releasedAt", &body.released_at, NO_MIN, NO_MAX)?;
 
+    // blockedBy：不传 = 不触碰；显式 null / 数组 = 全量替换（null 等价空数组）。
+    let blocked_by = match &body.blocked_by {
+        None => None,
+        Some(inner) => Some(
+            inner
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|r| -> Result<BlockedByRef<'_>, AppError> {
+                    let kind = required_string("blockedBy[].kind", &r.kind, 1, NO_MAX)?;
+                    let id = required_string("blockedBy[].id", &r.id, 1, NO_MAX)?;
+                    Ok(BlockedByRef { kind, id })
+                })
+                .collect::<Result<Vec<_>, AppError>>()?,
+        ),
+    };
+
     let row = requirement_service::update_requirement(
         &state.pool(),
         &project_id,
@@ -268,6 +291,7 @@ async fn update(
             coverage,
             released_at,
             owner_id,
+            blocked_by,
         },
         &state.config().public_origin,
     )

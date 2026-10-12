@@ -70,6 +70,12 @@ Historically extracted from TypeScript string-template prompts under `packages/c
 > ⑥同一批次的 Run 锁下沉：`run` 表新增「每需求至多一条 running」部分唯一索引与 `(requirement_id, index)` 唯一约束，接管（takeover）与开新 Run 合并进同一事务。
 > 升级提示：本次为**硬破坏**——不带 `--revision` 的写入一律 400，后端与 CLI / Console 须同步发版。
 >
+> 2026-10-12-cli-requirement-dependency：CLI 管理面补齐（需求 g7eg0oqNTXSH，来源用户反馈）——
+> ①CLI 新增 `chunsun requirement delete <ID>`：仅 `pending` / `abandoned` 可删；`running` / `completed` 返回 409 `REQUIREMENT_DELETE_NOT_ALLOWED`（护栏在后端执行，CLI / Console 一致）；
+> ②CLI 新增 `chunsun dependency add|remove <sourceType> <sourceId> <targetType> <targetId>`：薄封装依赖边增删（节点存在性 404、自环 / 成环 409 `DEPENDENCY_CYCLE` 均为后端强制）；依赖边修改对**人 + Agent** 开放（skill.md「依赖调度」节新增「边维护」用法）；
+> ③需求 / 缺陷 PATCH 支持 `blockedBy` 全量替换入边（服务层 `replace_blocked_by_in_tx`，行更新与边替换同一事务），修复 Console 编辑表单此前「发送 blockedBy 但后端静默忽略」的失效问题；Console 编辑表单同步回填现有依赖；
+> ④commands.md / skill.md 同步命令与用法，README 与官网 CLI 参考同步。
+>
 > 2026-08-21-host-dual-mode：Pre-flight 前增加宿主选择——存在 `chunsun_*` Agent 工具则走工具直连，否则走 CLI。
 >
 > 2026-08-06-ide-skills：技能本体（SKILL.md + references）从 `.agents/skills/chunsun/` 迁到所选

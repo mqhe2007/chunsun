@@ -8,7 +8,7 @@
 //!   不存在返回 404。
 //! - 权限档与 requirement/defect 一致：只判项目可见性。
 
-use sqlx::PgPool;
+use sqlx::{Executor, PgConnection, PgPool, Postgres};
 
 use crate::api::AppError;
 use crate::core::dependency_graph::{DependencyGraph, Edge, Node, NodeKind};
@@ -47,27 +47,34 @@ fn parse_kind(s: &str) -> Option<NodeKind> {
 }
 
 /// 校验节点是否真实存在于该项目（按 kind 分派到需求/缺陷查询）。
-async fn node_exists(
-    pool: &PgPool,
+/// 接受泛型 `Executor`（可在事务内复用）。
+async fn node_exists<'e, E>(
+    executor: E,
     project_id: &str,
     kind: NodeKind,
     id: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, AppError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     match kind {
         NodeKind::Requirement => {
-            Ok(requirement::get_requirement_by_id(pool, id, project_id)
+            Ok(requirement::get_requirement_by_id(executor, id, project_id)
                 .await?
                 .is_some())
         }
         NodeKind::Defect => {
-            Ok(defect::get_defect_by_id(pool, id, project_id).await?.is_some())
+            Ok(defect::get_defect_by_id(executor, id, project_id).await?.is_some())
         }
     }
 }
 
-/// 把项目内全部依赖边构建成图。
-async fn build_graph(pool: &PgPool, project_id: &str) -> Result<DependencyGraph, AppError> {
-    let rows = dependency::list_all_in_project(pool, project_id).await?;
+/// 把项目内全部依赖边构建成图。接受泛型 `Executor`（可在事务内复用）。
+async fn build_graph<'e, E>(executor: E, project_id: &str) -> Result<DependencyGraph, AppError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let rows = dependency::list_all_in_project(executor, project_id).await?;
     let edges = rows.into_iter().map(|r| Edge {
         source: Node {
             kind: parse_kind(&r.source_type).expect("db kind valid"),
@@ -154,6 +161,104 @@ pub async fn assert_blocked_by_refs_exist(
         let kind = NodeKind::parse(r.kind).ok_or(DependencyFailure::TargetNotFound)?;
         if !node_exists(pool, project_id, kind, r.id).await? {
             return Err(DependencyFailure::TargetNotFound.into());
+        }
+    }
+    Ok(())
+}
+
+/// PATCH 需求/缺陷更新时对「被谁阻塞」入边做**全量替换**：
+/// `refs` = 目标入边全集（空 = 清空），不在其中的现有入边会被删除。
+///
+/// 契约（与新建路径 `link_blocked_by_in_tx` 的差异）：
+/// 1. 去重 + 过滤空 id（与 `assert_blocked_by_refs_exist` 同口径）；
+/// 2. 每个**新增**引用节点必须存在，否则 404 `DEPENDENCY_TARGET_NOT_FOUND`；
+/// 3. **循环检测**：新增入边 `ref → me` 前，若 `me` 已可达 `ref` 则 409 `DEPENDENCY_CYCLE`
+///    （自引用同样按 Cycle 拒绝）；保留的既有边不重复检测（原本就在图中）；
+/// 4. 删旧增新与调用方的行更新在同一事务内，tx 生命周期由调用方控制。
+///
+/// 环检测使用变更前的全图：本函数只改 `me` 的**入边**，不影响 `me → …` 的可达性，
+/// 因此以旧图判定 `me` 是否可达 `ref`，与变更后一致。
+pub async fn replace_blocked_by_in_tx(
+    conn: &mut PgConnection,
+    project_id: &str,
+    target_kind: NodeKind,
+    target_id: &str,
+    refs: &[BlockedByRef<'_>],
+) -> Result<(), AppError> {
+    // 1) 归一化：去重 + 过滤空 id
+    let mut seen = std::collections::HashSet::new();
+    let mut desired: Vec<(NodeKind, String)> = Vec::new();
+    for r in refs {
+        if r.id.is_empty() {
+            continue;
+        }
+        let kind = NodeKind::parse(r.kind).ok_or(DependencyFailure::TargetNotFound)?;
+        if seen.insert((kind, r.id.to_string())) {
+            desired.push((kind, r.id.to_string()));
+        }
+    }
+
+    // 2) 列出现有入边 + 构建全图（环检测用）
+    let existing =
+        dependency::list_incoming(&mut *conn, project_id, target_kind.as_str(), target_id).await?;
+    let existing_set: std::collections::HashSet<(String, String)> = existing
+        .iter()
+        .map(|r| (r.source_type.clone(), r.source_id.clone()))
+        .collect();
+
+    let me = Node { kind: target_kind, id: target_id.to_string() };
+    let mut graph: Option<DependencyGraph> = None;
+
+    for (kind, id) in &desired {
+        if *kind == target_kind && id.as_str() == target_id {
+            return Err(DependencyFailure::Cycle.into());
+        }
+        // 既有边无需校验（建边时已校验且删除节点会级联清边）
+        if existing_set.contains(&(kind.as_str().to_string(), id.clone())) {
+            continue;
+        }
+        if !node_exists(&mut *conn, project_id, *kind, id).await? {
+            return Err(DependencyFailure::TargetNotFound.into());
+        }
+        if graph.is_none() {
+            graph = Some(build_graph(&mut *conn, project_id).await?);
+        }
+        let source_node = Node { kind: *kind, id: id.clone() };
+        if graph.as_ref().unwrap().reaches(&me, &source_node) {
+            return Err(DependencyFailure::Cycle.into());
+        }
+    }
+
+    // 3) diff 应用：删旧（不在目标集合）/ 增新（不在现有集合）
+    for row in &existing {
+        let keep = desired
+            .iter()
+            .any(|(k, id)| k.as_str() == row.source_type && id == &row.source_id);
+        if !keep {
+            dependency::delete_dependency(
+                &mut *conn,
+                project_id,
+                &row.source_type,
+                &row.source_id,
+                target_kind.as_str(),
+                target_id,
+            )
+            .await?;
+        }
+    }
+    for (kind, id) in &desired {
+        if !existing_set.contains(&(kind.as_str().to_string(), id.clone())) {
+            dependency::create_dependency(
+                &mut *conn,
+                CreateDependencyInput {
+                    project_id,
+                    source_type: kind.as_str(),
+                    source_id: id,
+                    target_type: target_kind.as_str(),
+                    target_id,
+                },
+            )
+            .await?;
         }
     }
     Ok(())

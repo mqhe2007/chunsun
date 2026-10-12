@@ -52,6 +52,21 @@ type ProjectMemberBrief = {
   };
 };
 
+/** 依赖端点返回的节点摘要（GET /projects/:id/dependencies/:type/:id 的 blockedBy 项）。 */
+type DependencyNodeBrief = {
+  id: string;
+  kind: "requirement" | "defect";
+  description: string | null;
+  status: string | null;
+};
+
+/** 依赖节点摘要 → NodePicker 回显项（label 规则与 NodePicker.labelFor 对齐）。 */
+function toPickedNode(n: DependencyNodeBrief): PickedNode {
+  const desc = n.description?.trim();
+  const short = desc ? (desc.length > 40 ? `${desc.slice(0, 40)}…` : desc) : n.id;
+  return { kind: n.kind, id: n.id, label: short || n.id };
+}
+
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
@@ -66,6 +81,8 @@ const statusFilter = ref<string[]>([]);
 const ownerFilter = ref("");
 const showForm = ref(false);
 const editing = ref<Requirement | null>(null);
+/** 编辑态：现有依赖是否已成功回填。未回填时保存不携带 blockedBy（避免误清空）。 */
+const depsLoaded = ref(false);
 const viewMode = ref<RequirementViewMode>("list");
 const boardReloadToken = ref(0);
 const previewRow = ref<Requirement | null>(null);
@@ -197,18 +214,36 @@ function resetForm() {
 
 function openCreate() {
   editing.value = null;
+  depsLoaded.value = false;
   resetForm();
   showForm.value = true;
 }
 
-function openEdit(row: Requirement) {
+async function openEdit(row: Requirement) {
   if (!canMutate(row)) return;
   editing.value = row;
+  depsLoaded.value = false;
   form.value = {
     description: row.description,
     ownerId: row.ownerId ?? "",
     blockedBy: [],
   };
+  // 回填现有「被谁阻塞」依赖；读取失败时保持未加载态，保存不会改动依赖关系。
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data?: { blockedBy: DependencyNodeBrief[] };
+    }>(`/projects/${projectId()}/dependencies/requirement/${row.id}`);
+    if (data.success && data.data) {
+      form.value.blockedBy = (data.data.blockedBy ?? []).map(toPickedNode);
+      depsLoaded.value = true;
+    }
+  } catch {
+    // 见下方提示
+  }
+  if (!depsLoaded.value) {
+    toast.error("依赖未加载", "现有依赖读取失败；本次保存不会改动依赖关系");
+  }
   showForm.value = true;
 }
 
@@ -218,11 +253,18 @@ async function saveRequirement() {
     return;
   }
 
-  const payload = {
+  const payload: {
+    description: string;
+    ownerId: string | null;
+    blockedBy?: { kind: string; id: string }[];
+  } = {
     description: form.value.description.trim(),
     ownerId: form.value.ownerId || null,
-    blockedBy: form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id })),
   };
+  // 新建恒携带；编辑仅在依赖已成功回填时携带（避免读取失败后保存误清空）
+  if (!editing.value || depsLoaded.value) {
+    payload.blockedBy = form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id }));
+  }
 
   saving.value = true;
   try {
@@ -278,8 +320,17 @@ async function confirmDelete(row: Requirement) {
     toast.success("已删除");
     boardReloadToken.value += 1;
     await fetchRequirements();
-  } catch {
-    toast.error("删除失败");
+  } catch (err: unknown) {
+    const code =
+      (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+    if (code === "REQUIREMENT_DELETE_NOT_ALLOWED") {
+      toast.error(
+        "无法删除",
+        "仅 pending / abandoned 状态的需求可删除；请先人工处置该需求",
+      );
+    } else {
+      toast.error("删除失败", code);
+    }
   }
 }
 

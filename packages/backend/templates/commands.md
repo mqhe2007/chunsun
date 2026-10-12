@@ -71,6 +71,8 @@ chunsun dependency list                                          # 列出项目�
 chunsun dependency schedule                                      # 全项目调度分析：拓扑分层 / 关键路径 / 阻塞状态 / 可执行集合
 chunsun dependency blocked <requirement|defect> <ID>             # 单节点阻塞状态：是否被阻塞 + 阻塞原因（未完成前置）+ 是否可执行
 chunsun dependency unlock <requirement|defect> <ID>              # 解锁分析：模拟该节点完成后，其直接下游中哪些解锁、哪些仍被阻塞
+chunsun dependency add <sourceType> <sourceId> <targetType> <targetId>     # 添加依赖边：source 阻塞 target（人 + Agent 开放）
+chunsun dependency remove <sourceType> <sourceId> <targetType> <targetId>  # 移除依赖边（参数同 add）
 ```
 
 依赖语义（与后端 DAG 一致）：
@@ -79,6 +81,7 @@ chunsun dependency unlock <requirement|defect> <ID>              # 解锁分析�
 - **完成判定**：requirement `completed`；defect `resolved` / `closed`。
 - **被阻塞**：节点存在任一未完成的直接前置（Blocked By 中存在非完成节点）→ 不进入执行队列。
 - **可执行**：所有直接前置均已完成。
+- **边维护（add / remove）**：节点类型 ∈ `requirement` / `defect`；新增引用节点不存在 404，自环 / 成环 409 `DEPENDENCY_CYCLE`（后端强制校验）。人对边的增删全开放；Agent 可在交付循环中发现缺失依赖时登记（见 skill「依赖调度」），误登记用 `remove` 撤回。
 
 Agent 调度用法（见 skill「依赖调度」节）：
 
@@ -93,6 +96,7 @@ chunsun requirement list [--status <状态>]                        # 列出需�
 chunsun requirement create --description "..."                   # 创建需求
 chunsun requirement show <id>
 chunsun requirement update <id> --status <状态>
+chunsun requirement delete <id>                                  # 删除需求（仅 pending / abandoned 可删；running / completed 拒删 409）
 chunsun defect list [--status <状态>] [--severity <级别>]          # 列出缺陷
 chunsun defect create --title "..." [--severity <级别>]           # 登记缺陷
 chunsun defect show <id>
@@ -101,6 +105,8 @@ chunsun env list / env get <key>                                 # 环境变量�
 ```
 
 可用需求状态：`pending` `running` `completed` `abandoned`（无 paused；轮次四态 `running` `completed` `finished` `abandoned`，`finished` 投影为需求 running）。缺陷状态：`open` `processing` `resolved` `closed`。
+
+需求删除护栏：仅 `pending` / `abandoned` 状态可删（`running` / `completed` 有交付历史，返回 409 `REQUIREMENT_DELETE_NOT_ALLOWED`，需先人工处置——例如 `requirement update <id> --status abandoned` 后再删）。删除为硬删：依赖边级联清理，run / step / scenario / 用例 / 工作记忆随库级联删除。
 
 ## 基础命令
 

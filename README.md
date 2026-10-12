@@ -142,7 +142,7 @@ flowchart LR
 
 ```txt
 chunsun init                  # 一键接入：绑定仓库 + 安装 Agent 能力
-chunsun requirement …         # list | create | show | update
+chunsun requirement …         # list | create | show | update | delete（仅 pending/abandoned 可删）
 chunsun defect …              # list | create | show | update | delete | convert-to-requirement
 chunsun run …                 # list | start | takeover | status | remind   （/chunsun 协议）
 chunsun step add|list         # 上报/查看执行步骤
@@ -150,7 +150,7 @@ chunsun scenario …            # list | upsert | status                     （
 chunsun case …                # list | upsert | status                     （验收用例）
 chunsun requirement memory get|put  # 需求工作记忆（Memory）；put 需 --revision <版本>（无记忆传 0）
 chunsun memory get|put        # 项目级记忆（跨需求填坑/经验，属知识库，仅可编辑不可删除）；put 需 --revision
-chunsun dependency …          # list | schedule | blocked | unlock   （依赖调度）
+chunsun dependency …          # list | schedule | blocked | unlock | add | remove   （依赖调度与边维护，人+Agent）
 chunsun knowledge …           # 概览（--strategy eager|lazy）| doc | index | create | update（项目知识，不支持删除；update 需 --revision）
 chunsun reset <需求ID>         # 全量重置（重来）
 chunsun fix <缺陷ID>           # 派生修复需求并启动自主交付（/chunsun-fix）

@@ -208,6 +208,9 @@ pub struct UpdateDefectArgs<'a> {
     pub severity: Option<&'a str>,
     /// 三态：不传 / 显式 null（清空） / 有值。空串在路由层已摊平成 `None`（对齐 JS `|| null`）。
     pub requirement_id: Option<Option<&'a str>>,
+    /// 「被谁阻塞」入边**全量替换**：`None` = 不触碰；`Some(refs)` = refs 即目标全集
+    /// （空列表 = 清空）。存在性 / 自环 / 成环校验见 `replace_blocked_by_in_tx`。
+    pub blocked_by: Option<Vec<BlockedByRef<'a>>>,
 }
 
 /// PATCH `/projects/:projectId/defects/:defectId`
@@ -226,8 +229,10 @@ pub async fn update_defect(
         .await?
         .ok_or::<AppError>(DefectFailure::DefectNotFound.into())?;
 
+    // 行更新与「被谁阻塞」入边全量替换同一事务：边校验（成环 / 节点不存在）失败时行更新一并回滚。
+    let mut tx = pool.begin().await?;
     let row = defect::update_defect_by_id(
-        pool,
+        &mut *tx,
         defect_id,
         &project_id,
         UpdateDefectPatch {
@@ -239,6 +244,18 @@ pub async fn update_defect(
     )
     .await?
     .ok_or::<AppError>(DefectFailure::DefectNotFound.into())?;
+
+    if let Some(refs) = args.blocked_by.as_ref() {
+        dep_service::replace_blocked_by_in_tx(
+            &mut *tx,
+            &project_id,
+            NodeKind::Defect,
+            defect_id,
+            refs,
+        )
+        .await?;
+    }
+    tx.commit().await?;
 
     let desc = defect_display_label(&row);
     log_activity(

@@ -52,6 +52,13 @@ enum RequirementCmd {
         #[arg(long)]
         json: bool,
     },
+    /// 删除需求（仅 pending / abandoned 状态可删；running / completed 拒删）
+    Delete {
+        /// 需求 ID
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// 需求工作记忆（Requirement Memory）
     Memory {
         #[command(subcommand)]
@@ -428,5 +435,41 @@ pub fn run(args: RequirementArgs) -> CmdResult {
             println!("[chunsun] 需求已更新：{}  [{}]", data.id, data.status);
             Ok(())
         }
+        RequirementCmd::Delete { id, json } => {
+            let config = load_config();
+            let api = ApiClient::new(&config)?;
+            let result: Value = match api.delete(&format!(
+                "/projects/{}/requirements/{}",
+                config.project_id,
+                urlencoding::encode(&id)
+            )) {
+                Ok(v) => v,
+                Err(e) if e.code() == Some("REQUIREMENT_DELETE_NOT_ALLOWED") => {
+                    return Err(CmdError::new(DELETE_NOT_ALLOWED_HINT));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if result.get("success").and_then(|v| v.as_bool()) != Some(true) {
+                let err = result
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("删除需求失败");
+                if err == "REQUIREMENT_DELETE_NOT_ALLOWED" {
+                    return Err(CmdError::new(DELETE_NOT_ALLOWED_HINT));
+                }
+                return Err(CmdError::new(err));
+            }
+            if json {
+                if let Some(data) = result.get("data") {
+                    return print_json(data);
+                }
+                return print_json(&result);
+            }
+            println!("[chunsun] 需求已删除：{id}");
+            Ok(())
+        }
     }
 }
+
+/// 删除护栏被拒时的可读提示（后端错误码 `REQUIREMENT_DELETE_NOT_ALLOWED`）。
+const DELETE_NOT_ALLOWED_HINT: &str = "仅 pending / abandoned 状态的需求可删除；running / completed 有交付历史，请先人工处置 [REQUIREMENT_DELETE_NOT_ALLOWED]";
