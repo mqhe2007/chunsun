@@ -14,6 +14,7 @@ import {
   useToast,
 } from "@/ui";
 import { api } from "@/utils/api";
+import { collectBlockedIds, type DependencyEdge } from "@/utils/dependencyBlocked";
 import {
   DEFECT_SEVERITY_LABEL,
   DEFECT_STATUS_LABEL,
@@ -130,16 +131,9 @@ watch(
   [statusFilter, severityFilter, keyword],
   () => {
     if (filterTimer) clearTimeout(filterTimer);
-    filterTimer = setTimeout(fetchDefects, 250);
+    filterTimer = setTimeout(() => void refreshList(), 250);
   },
 );
-
-type DependencyEdge = {
-  sourceType: "requirement" | "defect";
-  sourceId: string;
-  targetType: "requirement" | "defect";
-  targetId: string;
-};
 
 /** 依赖端点返回的节点摘要（GET /projects/:id/dependencies/:type/:id 的 blockedBy 项）。 */
 type DependencyNodeBrief = {
@@ -163,15 +157,16 @@ async function fetchBlockedIds() {
       data: DependencyEdge[];
     }>(`/projects/${projectId()}/dependencies`);
     if (data.success) {
-      const set = new Set<string>();
-      for (const e of data.data) {
-        if (e.targetType === "defect") set.add(e.targetId);
-      }
-      blockedDefectIds.value = set;
+      blockedDefectIds.value = collectBlockedIds(data.data, "defect");
     }
   } catch {
     // 忽略：依赖端点失败不阻断列表展示
   }
+}
+
+/** 列表数据与「被阻塞」集合同刷：前置完成/依赖变化后，标签需随刷新实时变化。 */
+async function refreshList() {
+  await Promise.all([fetchDefects(), fetchBlockedIds()]);
 }
 
 function openCreate() {
@@ -253,7 +248,7 @@ async function saveDefect() {
       toast.success("已创建");
     }
     showForm.value = false;
-    await fetchDefects();
+    await refreshList();
   } catch (err: unknown) {
     const msg =
       (err as { response?: { data?: { error?: string } } })?.response?.data
@@ -275,7 +270,7 @@ async function confirmDelete(row: DefectRow) {
   try {
     await api.delete(`/projects/${projectId()}/defects/${row.id}`);
     toast.success("已删除");
-    await fetchDefects();
+    await refreshList();
   } catch {
     toast.error("删除失败");
   }
@@ -306,7 +301,7 @@ async function confirmConvert(row: DefectRow) {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchDefects(), fetchBlockedIds()]);
+  await refreshList();
 });
 </script>
 
@@ -317,7 +312,7 @@ onMounted(async () => {
         type="button"
         class="btn btn-ghost"
         :disabled="loading"
-        @click="fetchDefects"
+        @click="refreshList"
       >
         <span v-if="loading" class="loading loading-spinner loading-xs" />
         刷新

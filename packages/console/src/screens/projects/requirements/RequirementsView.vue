@@ -15,6 +15,7 @@ import {
   useToast,
 } from "@/ui";
 import { api } from "@/utils/api";
+import { collectBlockedIds, type DependencyEdge } from "@/utils/dependencyBlocked";
 import { REQUIREMENT_STATUS_LABEL } from "@/utils/workflow";
 import CopyableValue from "@/components/common/CopyableValue.vue";
 import MarkdownDrawer from "@/components/common/MarkdownDrawer.vue";
@@ -105,7 +106,7 @@ function setViewMode(mode: RequirementViewMode) {
   if (viewMode.value === mode) return;
   viewMode.value = mode;
   writeViewMode(projectId(), mode);
-  if (mode === "list") void fetchRequirements();
+  if (mode === "list") void refreshList();
   else boardReloadToken.value += 1;
 }
 
@@ -183,13 +184,6 @@ async function fetchMembers() {
   }
 }
 
-type DependencyEdge = {
-  sourceType: "requirement" | "defect";
-  sourceId: string;
-  targetType: "requirement" | "defect";
-  targetId: string;
-};
-
 async function fetchBlockedIds() {
   try {
     const { data } = await api.get<{
@@ -197,16 +191,25 @@ async function fetchBlockedIds() {
       data: DependencyEdge[];
     }>(`/projects/${projectId()}/dependencies`);
     if (data.success) {
-      const set = new Set<string>();
-      for (const e of data.data) {
-        if (e.targetType === "requirement") set.add(e.targetId);
-      }
-      blockedRequirementIds.value = set;
+      blockedRequirementIds.value = collectBlockedIds(data.data, "requirement");
     }
   } catch {
     // 忽略：依赖端点失败不阻断列表展示
   }
 }
+
+/** 列表数据与「被阻塞」集合同刷：前置完成/依赖变化后，标签需随刷新实时变化。 */
+async function refreshList() {
+  await Promise.all([fetchRequirements(), fetchBlockedIds()]);
+}
+
+function refresh() {
+  if (viewMode.value === "list") void refreshList();
+  else boardReloadToken.value += 1;
+}
+
+// 看板重载（切换视图/筛选/保存/删除）时同步刷新「被阻塞」集合，避免标签滞留。
+watch(boardReloadToken, () => void fetchBlockedIds());
 
 function resetForm() {
   form.value = { description: "", ownerId: "", blockedBy: [] };
@@ -340,7 +343,7 @@ let filterTimer: ReturnType<typeof setTimeout> | null = null;
 watch([idFilter, statusFilter, ownerFilter], () => {
   if (filterTimer) clearTimeout(filterTimer);
   filterTimer = setTimeout(() => {
-    if (viewMode.value === "list") void fetchRequirements();
+    if (viewMode.value === "list") void refreshList();
     else boardReloadToken.value += 1;
   }, 250);
 });
@@ -348,8 +351,8 @@ watch([idFilter, statusFilter, ownerFilter], () => {
 onMounted(async () => {
   redirectLegacyQuery();
   viewMode.value = readViewMode(projectId());
-  const jobs: Promise<unknown>[] = [fetchMembers(), fetchBlockedIds()];
-  if (viewMode.value === "list") jobs.unshift(fetchRequirements());
+  const jobs: Promise<unknown>[] = [fetchMembers()];
+  jobs.push(viewMode.value === "list" ? refreshList() : fetchBlockedIds());
   await Promise.all(jobs);
 });
 </script>
@@ -387,7 +390,7 @@ onMounted(async () => {
         type="button"
         class="btn btn-ghost"
         :disabled="loading"
-        @click="viewMode === 'list' ? fetchRequirements() : boardReloadToken++"
+        @click="refresh"
       >
         <span v-if="loading" class="loading loading-spinner loading-xs" />
         刷新
