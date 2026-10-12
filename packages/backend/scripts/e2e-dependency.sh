@@ -9,6 +9,7 @@
 #   5. 删除节点级联清理依赖边
 #   6. PATCH blockedBy 全量替换：新增 / 清空 / 成环 409 / 同行更新与边替换同事务回滚 / 引用不存在 404（需求 + 缺陷）
 #   7. 需求删除状态护栏：pending 可删；running / completed 409 REQUIREMENT_DELETE_NOT_ALLOWED；abandoned 可删
+#   8. GET /dependencies 每边附 sourceDone 标注（列表「被阻塞」口径）：需求 completed / 缺陷 resolved 置 true；abandoned 不视为完成
 #
 # 前置：一个已启动、迁移就绪的后端实例；环境变量：
 #   CHUNSUN_BASE    后端 base URL（默认 http://127.0.0.1:18999/api/v1）
@@ -152,6 +153,45 @@ if [ -n "${CHUNSUN_DB_URL:-}" ]; then
 else
   echo "  - CHUNSUN_DB_URL 未设置，跳过级联删除断言"
 fi
+
+echo "== 11. /dependencies sourceDone（列表「被阻塞」口径） =="
+SID=$(post "/projects/$PID/requirements" '{"description":"阻塞源S"}' | jid)
+T1ID=$(post "/projects/$PID/requirements" '{"description":"目标T1"}' | jid)
+T2ID=$(post "/projects/$PID/defects" '{"description":"目标缺陷T2"}' | jid)
+DSID=$(post "/projects/$PID/defects" '{"description":"缺陷源DS"}' | jid)
+T3ID=$(post "/projects/$PID/requirements" '{"description":"目标T3"}' | jid)
+
+EDGE_S1=$(post "/projects/$PID/dependencies" "{\"sourceType\":\"requirement\",\"sourceId\":\"$SID\",\"targetType\":\"requirement\",\"targetId\":\"$T1ID\"}")
+check "建边 S->T1" '"success":true' "$EDGE_S1"
+EDGE_S2=$(post "/projects/$PID/dependencies" "{\"sourceType\":\"requirement\",\"sourceId\":\"$SID\",\"targetType\":\"defect\",\"targetId\":\"$T2ID\"}")
+check "建边 S->T2（跨类型）" '"success":true' "$EDGE_S2"
+EDGE_D3=$(post "/projects/$PID/dependencies" "{\"sourceType\":\"defect\",\"sourceId\":\"$DSID\",\"targetType\":\"requirement\",\"targetId\":\"$T3ID\"}")
+check "建边 DS->T3（缺陷源）" '"success":true' "$EDGE_D3"
+
+edge_flag() { # $1=列表JSON $2=sourceId $3=targetId
+  echo "$1" | python3 -c "import sys,json;d=json.load(sys.stdin)['data'];print([e['sourceDone'] for e in d if e['sourceId']=='$2' and e['targetId']=='$3'][0])"
+}
+
+LIST_1=$(get "/projects/$PID/dependencies")
+check "列表边均含 sourceDone 字段" '"sourceDone"' "$LIST_1"
+check "S pending：S->T1 sourceDone=false" "False" "$(edge_flag "$LIST_1" "$SID" "$T1ID")"
+check "S pending：S->T2 sourceDone=false" "False" "$(edge_flag "$LIST_1" "$SID" "$T2ID")"
+check "DS open：DS->T3 sourceDone=false" "False" "$(edge_flag "$LIST_1" "$DSID" "$T3ID")"
+
+patch "/projects/$PID/requirements/$SID" '{"status":"completed"}' >/dev/null
+patch "/projects/$PID/defects/$DSID" '{"status":"resolved"}' >/dev/null
+LIST_2=$(get "/projects/$PID/dependencies")
+check "S completed：S->T1 sourceDone=true" "True" "$(edge_flag "$LIST_2" "$SID" "$T1ID")"
+check "S completed：S->T2 sourceDone=true" "True" "$(edge_flag "$LIST_2" "$SID" "$T2ID")"
+check "DS resolved：DS->T3 sourceDone=true" "True" "$(edge_flag "$LIST_2" "$DSID" "$T3ID")"
+
+SAID=$(post "/projects/$PID/requirements" '{"description":"弃用源SA"}' | jid)
+T4ID=$(post "/projects/$PID/requirements" '{"description":"目标T4"}' | jid)
+EDGE_SA4=$(post "/projects/$PID/dependencies" "{\"sourceType\":\"requirement\",\"sourceId\":\"$SAID\",\"targetType\":\"requirement\",\"targetId\":\"$T4ID\"}")
+check "建边 SA->T4" '"success":true' "$EDGE_SA4"
+patch "/projects/$PID/requirements/$SAID" '{"status":"abandoned"}' >/dev/null
+LIST_3=$(get "/projects/$PID/dependencies")
+check "SA abandoned：SA->T4 sourceDone=false（abandoned 不算完成）" "False" "$(edge_flag "$LIST_3" "$SAID" "$T4ID")"
 
 echo
 echo "======== 结果: PASS=$PASS FAIL=$FAIL ========"

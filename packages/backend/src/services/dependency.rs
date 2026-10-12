@@ -619,6 +619,32 @@ fn done_set(nodes: &[ScheduleNode]) -> std::collections::HashSet<Node> {
     nodes.iter().filter(|n| n.done()).map(|n| n.node()).collect()
 }
 
+/// 项目内全部依赖边 + source（阻塞方）是否已完成。
+///
+/// 供 Console 列表计算「被阻塞」标识：仅 source 未完成的边构成阻塞，
+/// 「完成」判定与调度分析同口径（`node_is_done`：需求 completed；缺陷 resolved/closed；
+/// abandoned 不视为完成）。source 节点缺失（不应发生，删除节点会级联清理边）按未完成处理。
+pub async fn list_edges_with_source_done(
+    pool: &PgPool,
+    project_id: &str,
+    user_id: &str,
+    is_admin: bool,
+) -> Result<Vec<(DependencyRow, bool)>, AppError> {
+    let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+    let rows = dependency::list_all_in_project(pool, &project_id).await?;
+    let nodes = load_all_nodes(pool, &project_id).await?;
+    let done = done_set(&nodes);
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let source_done = parse_kind(&r.source_type)
+                .map(|kind| done.contains(&Node { kind, id: r.source_id.clone() }))
+                .unwrap_or(false);
+            (r, source_done)
+        })
+        .collect())
+}
+
 fn node_map(nodes: &[ScheduleNode]) -> std::collections::HashMap<Node, ScheduleNode> {
     nodes.iter().map(|n| (n.node(), n.clone())).collect()
 }

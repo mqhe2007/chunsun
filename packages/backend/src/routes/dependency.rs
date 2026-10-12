@@ -44,24 +44,24 @@ pub struct AddDependencyBody {
 // ── handlers ────────────────────────────────────────────────────────────
 
 /// GET 项目内全部依赖边（供前端算「被阻塞」标识与依赖图可视化）。
+///
+/// 每条边附 `sourceDone`：source（阻塞方）是否已完成（需求 completed；缺陷 resolved/closed；
+/// abandoned 不视为完成）。仅存在未完成 source 的边才构成阻塞，口径与 `dependency blocked` 一致。
 async fn list_all(
     State(state): State<AppState>,
     CurrentUser(session): CurrentUser,
     Path(project_id): Path<String>,
 ) -> Result<Json<ApiResponse<Vec<Value>>>, AppError> {
-    use crate::repos::dependency as dep_repo;
-    let project_id =
-        crate::services::project_access::visible_project_id(
-            &state.pool(),
-            &project_id,
-            &session.user.user_id,
-            session.user.role == "ADMIN",
-        )
-        .await?;
-    let rows = dep_repo::list_all_in_project(&state.pool(), &project_id).await?;
+    let rows = dep_service::list_edges_with_source_done(
+        &state.pool(),
+        &project_id,
+        &session.user.user_id,
+        session.user.role == "ADMIN",
+    )
+    .await?;
     Ok(ok(
         rows.iter()
-            .map(|r| {
+            .map(|(r, source_done)| {
                 json!({
                     "id": r.id,
                     "projectId": r.project_id,
@@ -69,6 +69,7 @@ async fn list_all(
                     "sourceId": r.source_id,
                     "targetType": r.target_type,
                     "targetId": r.target_id,
+                    "sourceDone": source_done,
                     "createdAt": crate::core::datetime::to_value(&r.created_at),
                 })
             })
