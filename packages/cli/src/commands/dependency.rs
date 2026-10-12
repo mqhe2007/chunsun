@@ -1,6 +1,6 @@
 use clap::{Args, Subcommand};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::api::ApiClient;
 use crate::commands::{print_json, CmdError, CmdResult};
@@ -39,6 +39,32 @@ enum DependencyCmd {
         node_type: String,
         /// 节点 ID
         node_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 添加依赖边：source 阻塞 target（source → target）
+    Add {
+        /// source 节点类型：requirement | defect
+        source_type: String,
+        /// source 节点 ID（阻塞方）
+        source_id: String,
+        /// target 节点类型：requirement | defect
+        target_type: String,
+        /// target 节点 ID（被阻塞方）
+        target_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 移除依赖边（source 阻塞 target 的那条边，参数同 add）
+    Remove {
+        /// source 节点类型：requirement | defect
+        source_type: String,
+        /// source 节点 ID（阻塞方）
+        source_id: String,
+        /// target 节点类型：requirement | defect
+        target_type: String,
+        /// target 节点 ID（被阻塞方）
+        target_id: String,
         #[arg(long)]
         json: bool,
     },
@@ -298,6 +324,106 @@ fn run_unlock(node_type: String, node_id: String, json: bool) -> CmdResult {
     Ok(())
 }
 
+/// 把后端依赖错误码翻译成可读文案（未知码原样透出，保证信息不丢）。
+fn dep_error_text(code: Option<&str>, fallback: &str) -> String {
+    match code {
+        Some("DEPENDENCY_CYCLE") => {
+            "会形成循环依赖（自环或成环），已拒绝 [DEPENDENCY_CYCLE]".into()
+        }
+        Some("DEPENDENCY_SOURCE_NOT_FOUND") => {
+            "source 节点不存在 [DEPENDENCY_SOURCE_NOT_FOUND]".into()
+        }
+        Some("DEPENDENCY_TARGET_NOT_FOUND") => {
+            "target 节点不存在 [DEPENDENCY_TARGET_NOT_FOUND]".into()
+        }
+        Some("DEPENDENCY_NOT_FOUND") => "依赖边不存在 [DEPENDENCY_NOT_FOUND]".into(),
+        Some(other) => format!("{fallback}：{other}"),
+        None => fallback.into(),
+    }
+}
+
+fn validate_pair(source_type: &str, target_type: &str) -> Result<(), CmdError> {
+    if !node_type_valid(source_type) {
+        return Err(CmdError::new("source_type 只能是 requirement / defect 之一"));
+    }
+    if !node_type_valid(target_type) {
+        return Err(CmdError::new("target_type 只能是 requirement / defect 之一"));
+    }
+    Ok(())
+}
+
+fn run_add(
+    source_type: String,
+    source_id: String,
+    target_type: String,
+    target_id: String,
+    json: bool,
+) -> CmdResult {
+    validate_pair(&source_type, &target_type)?;
+    let config = load_config();
+    let api = ApiClient::new(&config)?;
+    let resp: ApiResponse<Value> = match api.post(
+        &deps_path(&config.project_id),
+        json!({
+            "sourceType": source_type,
+            "sourceId": source_id,
+            "targetType": target_type,
+            "targetId": target_id,
+        }),
+    ) {
+        Ok(r) => r,
+        Err(e) => return Err(CmdError::new(dep_error_text(e.code(), "添加依赖失败"))),
+    };
+    if !resp.success {
+        return Err(CmdError::new(dep_error_text(
+            resp.error.as_deref(),
+            "添加依赖失败",
+        )));
+    }
+    let data = resp.data.unwrap_or(Value::Null);
+    if json {
+        return print_json(&data);
+    }
+    println!("[chunsun] 已添加依赖：{source_type}:{source_id} 阻塞 {target_type}:{target_id}");
+    Ok(())
+}
+
+fn run_remove(
+    source_type: String,
+    source_id: String,
+    target_type: String,
+    target_id: String,
+    json: bool,
+) -> CmdResult {
+    validate_pair(&source_type, &target_type)?;
+    let config = load_config();
+    let api = ApiClient::new(&config)?;
+    let path = format!(
+        "{}/{}/{}/{}/{}",
+        deps_path(&config.project_id),
+        urlencoding::encode(&source_type),
+        urlencoding::encode(&source_id),
+        urlencoding::encode(&target_type),
+        urlencoding::encode(&target_id),
+    );
+    let resp: ApiResponse<Value> = match api.delete(&path) {
+        Ok(r) => r,
+        Err(e) => return Err(CmdError::new(dep_error_text(e.code(), "移除依赖失败"))),
+    };
+    if !resp.success {
+        return Err(CmdError::new(dep_error_text(
+            resp.error.as_deref(),
+            "移除依赖失败",
+        )));
+    }
+    let data = resp.data.unwrap_or(Value::Null);
+    if json {
+        return print_json(&data);
+    }
+    println!("[chunsun] 已移除依赖：{source_type}:{source_id} 阻塞 {target_type}:{target_id}");
+    Ok(())
+}
+
 pub fn run(args: DependencyArgs) -> CmdResult {
     match args.command {
         DependencyCmd::List { json } => run_list(json),
@@ -312,6 +438,20 @@ pub fn run(args: DependencyArgs) -> CmdResult {
             node_id,
             json,
         } => run_unlock(node_type, node_id, json),
+        DependencyCmd::Add {
+            source_type,
+            source_id,
+            target_type,
+            target_id,
+            json,
+        } => run_add(source_type, source_id, target_type, target_id, json),
+        DependencyCmd::Remove {
+            source_type,
+            source_id,
+            target_type,
+            target_id,
+            json,
+        } => run_remove(source_type, source_id, target_type, target_id, json),
     }
 }
 
@@ -367,5 +507,15 @@ mod tests {
         let label = node_label(&v);
         assert!(label.starts_with("requirement:abc123 [pending]"));
         assert!(label.contains("测试描述"));
+    }
+
+    #[test]
+    fn dep_error_text_maps_known_codes() {
+        assert!(dep_error_text(Some("DEPENDENCY_CYCLE"), "添加依赖失败").contains("循环依赖"));
+        assert!(
+            dep_error_text(Some("DEPENDENCY_NOT_FOUND"), "移除依赖失败").contains("依赖边不存在")
+        );
+        assert_eq!(dep_error_text(None, "添加依赖失败"), "添加依赖失败");
+        assert!(dep_error_text(Some("SOMETHING_ELSE"), "添加依赖失败").contains("SOMETHING_ELSE"));
     }
 }

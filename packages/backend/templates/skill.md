@@ -174,6 +174,9 @@ argument-hint: '<requirement-id | defect-id | 自然语言意图>'
 - **自动解锁**：任务完成（completed/resolved）后 `chunsun dependency unlock requirement|defect <ID>` 检查下游：
   - 下游所有前置已完成 → 自动解锁，可进入执行；
   - 仍被阻塞（有其他未完成前置）→ 记录仍阻塞原因。
+- **边维护（人 + Agent 开放）**：`chunsun dependency add|remove <sourceType> <sourceId> <targetType> <targetId>` 增删边（source 阻塞 target；类型 ∈ requirement / defect）。
+  - 执行中发现缺失依赖（如识别到 B 需 A 先完成才可开始）→ 用 `dependency add` 登记，并在 Step / 工作记忆中说明依据；误登记用 `dependency remove` 撤回。
+  - 后端强制校验：节点不存在 404、自环 / 成环 409 `DEPENDENCY_CYCLE`；边维护同样是「平台管状态合法性」的一环，不要绕过。
 - **阻塞原因入工作记忆**：被阻塞任务必须在 Memory 的「## 阻塞原因」章节中记录阻塞原因与前置任务列表（验收标准：明确留痕）。
 - **节点完成语义**：requirement 状态 `completed` 视为完成；defect 状态 `resolved` / `closed` 视为完成。
 
@@ -335,11 +338,13 @@ chunsun scenario list|upsert|status
 chunsun case list|upsert|status
 chunsun requirement memory get <需求ID>                      # 输出含版本号（写回用）
 chunsun requirement memory put <需求ID> --revision <N> --snapshot '<Markdown>'
+chunsun requirement delete <需求ID>                           # 删除需求（仅 pending/abandoned；running/completed 拒删）
 chunsun memory get                                         # 项目级记忆（跨需求填坑/经验，属知识库；输出含版本号）
 chunsun memory put --revision <N> --snapshot '<Markdown>'   # 写回项目级记忆（--revision 必填，无则传 0）
 chunsun dependency list|schedule                                  # 依赖边 / 全项目调度分析
 chunsun dependency blocked <requirement|defect> <ID>              # 单节点阻塞状态与阻塞原因
 chunsun dependency unlock <requirement|defect> <ID>               # 完成后下游解锁分析
+chunsun dependency add|remove <sourceType> <sourceId> <targetType> <targetId>  # 增删依赖边（人 + Agent 开放）
 chunsun knowledge [--json]                                    # 项目知识概览/按策略过滤（--strategy eager|lazy）
 chunsun knowledge doc <文档ID|constitution|memory> [--json]    # 深读单篇正文与完整未处理批注
 chunsun knowledge annotation list|resolve|reopen               # 全局发现 / 结案 / 重开批注

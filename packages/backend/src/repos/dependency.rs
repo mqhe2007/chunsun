@@ -142,12 +142,16 @@ pub async fn list_outgoing(
 }
 
 /// 查询某节点的全部**直接入边**（谁阻塞了该节点 = Blocked By 列表）。
-pub async fn list_incoming(
-    pool: &PgPool,
+/// 接受泛型 `Executor`（可在事务内复用）。
+pub async fn list_incoming<'e, E>(
+    executor: E,
     project_id: &str,
     node_type: &str,
     node_id: &str,
-) -> Result<Vec<DependencyRow>, AppError> {
+) -> Result<Vec<DependencyRow>, AppError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let sql = format!(
         "SELECT {DEP_COLS} FROM dependency \
          WHERE project_id = $1 AND target_type = $2 AND target_id = $3 \
@@ -157,7 +161,7 @@ pub async fn list_incoming(
         .bind(project_id)
         .bind(node_type)
         .bind(node_id)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     Ok(rows.into_iter().map(Into::into).collect())
 }
@@ -185,14 +189,18 @@ pub async fn list_all_for_node(
 }
 
 /// 查询项目内**所有**依赖边（构建完整图，用于传递依赖查询与循环检测）。
-pub async fn list_all_in_project(
-    pool: &PgPool,
+/// 接受泛型 `Executor`（可在事务内复用）。
+pub async fn list_all_in_project<'e, E>(
+    executor: E,
     project_id: &str,
-) -> Result<Vec<DependencyRow>, AppError> {
+) -> Result<Vec<DependencyRow>, AppError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let sql = format!("SELECT {DEP_COLS} FROM dependency WHERE project_id = $1");
     let rows = sqlx::query_as::<_, DependencyPlainRow>(&sql)
         .bind(project_id)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     Ok(rows.into_iter().map(Into::into).collect())
 }

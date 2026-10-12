@@ -34,6 +34,8 @@ pub enum RequirementFailure {
     OwnerNotMember,
     /// 需求不存在（或不属于该项目）→ 404
     RequirementNotFound,
+    /// 仅 pending / abandoned 可删，其余状态有交付历史 → 409
+    DeleteNotAllowed,
 }
 
 impl From<RequirementFailure> for AppError {
@@ -42,6 +44,9 @@ impl From<RequirementFailure> for AppError {
             RequirementFailure::OwnerNotMember => AppError::bad_request("OWNER_NOT_MEMBER"),
             RequirementFailure::RequirementNotFound => {
                 AppError::not_found("REQUIREMENT_NOT_FOUND")
+            }
+            RequirementFailure::DeleteNotAllowed => {
+                AppError::conflict("REQUIREMENT_DELETE_NOT_ALLOWED")
             }
         }
     }
@@ -216,6 +221,9 @@ pub struct UpdateRequirementArgs<'a> {
     pub released_at: Option<Option<&'a str>>,
     /// 三态：不传 / 显式 null（断开） / 有值。空串走「断开」分支（JS falsy）。
     pub owner_id: Option<Option<&'a str>>,
+    /// 「被谁阻塞」入边**全量替换**：`None` = 不触碰；`Some(refs)` = refs 即目标全集
+    /// （空列表 = 清空）。存在性 / 自环 / 成环校验见 `replace_blocked_by_in_tx`。
+    pub blocked_by: Option<Vec<BlockedByRef<'a>>>,
 }
 
 /// PATCH `/projects/:projectId/requirements/:requirementId`
@@ -240,8 +248,10 @@ pub async fn update_requirement(
         .owner_id
         .map(|v| v.filter(|s| !s.is_empty()));
 
+    // 行更新与「被谁阻塞」入边全量替换同一事务：边校验（成环 / 节点不存在）失败时行更新一并回滚。
+    let mut tx = pool.begin().await?;
     let row = requirement::update_requirement_by_id(
-        pool,
+        &mut *tx,
         requirement_id,
         &project_id,
         UpdateRequirementPatch {
@@ -259,6 +269,18 @@ pub async fn update_requirement(
     )
     .await?
     .ok_or::<AppError>(RequirementFailure::RequirementNotFound.into())?;
+
+    if let Some(refs) = args.blocked_by.as_ref() {
+        dep_service::replace_blocked_by_in_tx(
+            &mut *tx,
+            &project_id,
+            NodeKind::Requirement,
+            requirement_id,
+            refs,
+        )
+        .await?;
+    }
+    tx.commit().await?;
 
     let desc = format!("更新需求 {}", row.id);
     log_activity(
@@ -312,6 +334,9 @@ pub async fn update_requirement(
 /// DELETE `/projects/:projectId/requirements/:requirementId`
 ///
 /// 旧实现**没有**写活动日志（与 create/patch 不对称），照搬。
+///
+/// 状态护栏：仅 `pending` / `abandoned` 可删；`running` / `completed` 有交付历史，
+/// 返回 409 `REQUIREMENT_DELETE_NOT_ALLOWED`，需先人工处置（Platform 管状态合法性）。
 pub async fn delete_requirement(
     pool: &PgPool,
     project_id: &str,
@@ -320,6 +345,12 @@ pub async fn delete_requirement(
     is_admin: bool,
 ) -> Result<String, AppError> {
     let project_id = visible_project_id(pool, project_id, user_id, is_admin).await?;
+    let existing = requirement::get_requirement_by_id(pool, requirement_id, &project_id)
+        .await?
+        .ok_or::<AppError>(RequirementFailure::RequirementNotFound.into())?;
+    if !matches!(existing.status.as_str(), "pending" | "abandoned") {
+        return Err(RequirementFailure::DeleteNotAllowed.into());
+    }
     let row = requirement::delete_requirement_by_id(pool, requirement_id, &project_id)
         .await?
         .ok_or::<AppError>(RequirementFailure::RequirementNotFound.into())?;

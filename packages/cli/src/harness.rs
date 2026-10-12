@@ -782,7 +782,7 @@ mod tests {
     fn fixture_version_matches_backend_ssot() {
         assert_eq!(
             fixture_bundle().template_version,
-            "2026-10-05-chatgpt-skills",
+            "2026-10-12-cli-requirement-dependency",
             "templates/VERSION 应已 bump 为新版本号",
         );
     }

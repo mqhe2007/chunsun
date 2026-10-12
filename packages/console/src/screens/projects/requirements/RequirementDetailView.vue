@@ -230,11 +230,16 @@ async function confirmDelete() {
       life: 2000,
     });
     goBack();
-  } catch {
+  } catch (err: unknown) {
+    const code =
+      (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
     toast.add({
       severity: "error",
-      summary: "删除失败",
-      life: 3000,
+      summary:
+        code === "REQUIREMENT_DELETE_NOT_ALLOWED"
+          ? "无法删除：仅 pending / abandoned 状态可删，请先人工处置该需求"
+          : "删除失败",
+      life: 4000,
     });
   }
 }

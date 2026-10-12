@@ -57,6 +57,8 @@ const showForm = ref(false);
 const showDetail = ref(false);
 const selected = ref<DefectRow | null>(null);
 const editing = ref<DefectRow | null>(null);
+/** 编辑态：现有依赖是否已成功回填。未回填时保存不携带 blockedBy（避免误清空）。 */
+const depsLoaded = ref(false);
 const previewRow = ref<DefectRow | null>(null);
 const previewOpen = computed({
   get: () => previewRow.value !== null,
@@ -139,6 +141,21 @@ type DependencyEdge = {
   targetId: string;
 };
 
+/** 依赖端点返回的节点摘要（GET /projects/:id/dependencies/:type/:id 的 blockedBy 项）。 */
+type DependencyNodeBrief = {
+  id: string;
+  kind: "requirement" | "defect";
+  description: string | null;
+  status: string | null;
+};
+
+/** 依赖节点摘要 → NodePicker 回显项（label 规则与 NodePicker.labelFor 对齐）。 */
+function toPickedNode(n: DependencyNodeBrief): PickedNode {
+  const desc = n.description?.trim();
+  const short = desc ? (desc.length > 40 ? `${desc.slice(0, 40)}…` : desc) : n.id;
+  return { kind: n.kind, id: n.id, label: short || n.id };
+}
+
 async function fetchBlockedIds() {
   try {
     const { data } = await api.get<{
@@ -159,6 +176,7 @@ async function fetchBlockedIds() {
 
 function openCreate() {
   editing.value = null;
+  depsLoaded.value = false;
   form.value = {
     description: "",
     status: "open",
@@ -173,14 +191,31 @@ function openDetail(row: DefectRow) {
   showDetail.value = true;
 }
 
-function openEdit(row: DefectRow) {
+async function openEdit(row: DefectRow) {
   editing.value = row;
+  depsLoaded.value = false;
   form.value = {
     description: row.description ?? "",
     status: row.status,
     severity: row.severity,
     blockedBy: [],
   };
+  // 回填现有「被谁阻塞」依赖；读取失败时保持未加载态，保存不会改动依赖关系。
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data?: { blockedBy: DependencyNodeBrief[] };
+    }>(`/projects/${projectId()}/dependencies/defect/${row.id}`);
+    if (data.success && data.data) {
+      form.value.blockedBy = (data.data.blockedBy ?? []).map(toPickedNode);
+      depsLoaded.value = true;
+    }
+  } catch {
+    // 见下方提示
+  }
+  if (!depsLoaded.value) {
+    toast.error("依赖未加载", "现有依赖读取失败；本次保存不会改动依赖关系");
+  }
   showForm.value = true;
 }
 
@@ -191,12 +226,20 @@ async function saveDefect() {
   }
 
   saving.value = true;
-  const payload = {
+  const payload: {
+    description?: string;
+    status: string;
+    severity: string;
+    blockedBy?: { kind: string; id: string }[];
+  } = {
     description: form.value.description.trim() || undefined,
     status: form.value.status,
     severity: form.value.severity,
-    blockedBy: form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id })),
   };
+  // 新建恒携带；编辑仅在依赖已成功回填时携带（避免读取失败后保存误清空）
+  if (!editing.value || depsLoaded.value) {
+    payload.blockedBy = form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id }));
+  }
 
   try {
     if (editing.value) {

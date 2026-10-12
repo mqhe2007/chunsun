@@ -13,7 +13,7 @@
 //! - `get_defect_by_id` 接受泛型 `Executor`，供 convert 事务内复用。
 
 use chrono::{DateTime, Utc};
-use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder};
+use sqlx::{Executor, FromRow, PgConnection, PgPool, Postgres, QueryBuilder};
 
 use crate::api::AppError;
 use crate::core::ids::nanoid;
@@ -292,8 +292,10 @@ impl UpdateDefectPatch<'_> {
 ///
 /// 旧实现即使补丁为空也会走一次 `prisma.update`，从而**刷新 `updatedAt`**。
 /// 这里照搬：空补丁也执行 `SET updated_at = NOW()`。
+///
+/// 接受 `&mut PgConnection`：服务层在事务内调用，行更新与依赖边替换同一事务。
 pub async fn update_defect_by_id(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     id: &str,
     project_id: &str,
     patch: UpdateDefectPatch<'_>,
@@ -302,7 +304,7 @@ pub async fn update_defect_by_id(
         sqlx::query_scalar("SELECT id FROM defect WHERE id = $1 AND project_id = $2")
             .bind(id)
             .bind(project_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?;
     if exists.is_none() {
         return Ok(None);
@@ -311,9 +313,9 @@ pub async fn update_defect_by_id(
     if patch.is_empty() {
         sqlx::query("UPDATE defect SET updated_at = NOW() WHERE id = $1")
             .bind(id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
-        return get_defect_by_id(pool, id, project_id).await;
+        return get_defect_by_id(&mut *conn, id, project_id).await;
     }
 
     let mut qb = QueryBuilder::new("UPDATE defect SET updated_at = NOW()");
@@ -339,8 +341,8 @@ pub async fn update_defect_by_id(
     qb.push(" WHERE id = ");
     qb.push_bind(id);
 
-    qb.build().execute(pool).await?;
-    get_defect_by_id(pool, id, project_id).await
+    qb.build().execute(&mut *conn).await?;
+    get_defect_by_id(&mut *conn, id, project_id).await
 }
 
 /// deleteDefectById：先查存在性再删，返回被删的行（带 requirement 关联占位）。

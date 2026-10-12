@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 
 /// 当前模板版本号。技能 / 协议有结构性改动时必须递增。
 /// 与 `templates/VERSION` 及 CLI 侧 `fixture_version` 测试保持一致。
-pub const TEMPLATE_VERSION: &str = "2026-10-05-chatgpt-skills";
+pub const TEMPLATE_VERSION: &str = "2026-10-12-cli-requirement-dependency";
 
 const SKILL: &str = include_str!("../templates/skill.md");
 const LOOP_RULES: &str = include_str!("../templates/loop-rules.md");
@@ -92,5 +92,15 @@ mod tests {
         assert!(!SKILL.contains("斜线命令（仅 2 个）"), "斜线命令章节应已移除");
         assert!(!SKILL.contains("AGENTS.md）"), "不应再引用 AGENTS.md 桥接");
         assert!(LOOP_RULES.contains("技能激活期间恒生效"));
+    }
+
+    #[test]
+    fn cli_management_contract_present() {
+        // 2026-10-12-cli-requirement-dependency：CLI 管理面补齐进入 Agent 契约
+        assert!(COMMANDS.contains("chunsun requirement delete"));
+        assert!(COMMANDS.contains("chunsun dependency add"));
+        assert!(COMMANDS.contains("chunsun dependency remove"));
+        assert!(SKILL.contains("dependency add|remove"));
+        assert!(SKILL.contains("requirement delete"));
     }
 }
