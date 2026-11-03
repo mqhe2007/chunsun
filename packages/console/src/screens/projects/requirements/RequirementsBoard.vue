@@ -86,7 +86,7 @@ function ownerLabel(row: BoardRequirement): string {
   return row.owner?.nickname || "—";
 }
 
-function canMutate(row: BoardRequirement): boolean {
+function canDelete(row: BoardRequirement): boolean {
   return row.status === "pending";
 }
 
@@ -290,7 +290,7 @@ onUnmounted(() => {
                 {{ new Date(row.updatedAt).toLocaleDateString() }}
               </span>
             </div>
-            <div v-if="canMutate(row)" class="flex justify-end gap-1" @click.stop>
+            <div class="flex justify-end gap-1" @click.stop>
               <button
                 type="button"
                 class="btn btn-ghost btn-square btn-xs"
@@ -301,6 +301,7 @@ onUnmounted(() => {
                 <Pencil :size="14" aria-hidden="true" />
               </button>
               <button
+                v-if="canDelete(row)"
                 type="button"
                 class="btn btn-ghost btn-square btn-xs btn-error"
                 aria-label="删除"

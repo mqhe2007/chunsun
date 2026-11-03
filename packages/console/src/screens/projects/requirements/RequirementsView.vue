@@ -97,6 +97,7 @@ const previewOpen = computed({
 const form = ref({
   description: "",
   ownerId: "" as string,
+  status: "pending",
   blockedBy: [] as PickedNode[],
 });
 
@@ -131,7 +132,7 @@ function statusBadgeClass(status: string) {
   return "badge-ghost";
 }
 
-function canMutate(row: Requirement): boolean {
+function canDelete(row: Requirement): boolean {
   return row.status === "pending";
 }
 
@@ -212,7 +213,7 @@ function refresh() {
 watch(boardReloadToken, () => void fetchBlockedIds());
 
 function resetForm() {
-  form.value = { description: "", ownerId: "", blockedBy: [] };
+  form.value = { description: "", ownerId: "", status: "pending", blockedBy: [] };
 }
 
 function openCreate() {
@@ -223,12 +224,12 @@ function openCreate() {
 }
 
 async function openEdit(row: Requirement) {
-  if (!canMutate(row)) return;
   editing.value = row;
   depsLoaded.value = false;
   form.value = {
     description: row.description,
     ownerId: row.ownerId ?? "",
+    status: row.status,
     blockedBy: [],
   };
   // 回填现有「被谁阻塞」依赖；读取失败时保持未加载态，保存不会改动依赖关系。
@@ -259,11 +260,16 @@ async function saveRequirement() {
   const payload: {
     description: string;
     ownerId: string | null;
+    status?: string;
     blockedBy?: { kind: string; id: string }[];
   } = {
     description: form.value.description.trim(),
     ownerId: form.value.ownerId || null,
   };
+  // 只提交手动选择的状态变化，避免编辑其他字段时回写过期状态。
+  if (editing.value && form.value.status !== editing.value.status) {
+    payload.status = form.value.status;
+  }
   // 新建恒携带；编辑仅在依赖已成功回填时携带（避免读取失败后保存误清空）
   if (!editing.value || depsLoaded.value) {
     payload.blockedBy = form.value.blockedBy.map(n => ({ kind: n.kind, id: n.id }));
@@ -310,7 +316,7 @@ async function saveRequirement() {
 }
 
 async function confirmDelete(row: Requirement) {
-  if (!canMutate(row)) return;
+  if (!canDelete(row)) return;
   const ok = await confirm({
     title: "删除需求",
     message: `确定删除需求「${row.id}」？此操作不可撤回。`,
@@ -513,18 +519,17 @@ onMounted(async () => {
             <button type="button" class="btn btn-ghost btn-sm" @click="openDetail(row as Requirement)">
               详情
             </button>
-            <template v-if="canMutate(row as Requirement)">
-              <button type="button" class="btn btn-ghost btn-sm" @click="openEdit(row as Requirement)">
-                编辑
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm btn-error"
-                @click="confirmDelete(row as Requirement)"
-              >
-                删除
-              </button>
-            </template>
+            <button type="button" class="btn btn-ghost btn-sm" @click="openEdit(row as Requirement)">
+              编辑
+            </button>
+            <button
+              v-if="canDelete(row as Requirement)"
+              type="button"
+              class="btn btn-ghost btn-sm btn-error"
+              @click="confirmDelete(row as Requirement)"
+            >
+              删除
+            </button>
           </div>
         </template>
       </AppColumn>
@@ -532,6 +537,13 @@ onMounted(async () => {
 
     <AppDrawer v-model="showForm" :title="editing ? '编辑需求' : '新建需求'">
       <div class="form-grid">
+        <AppField v-if="editing" label="状态" html-for="requirement-edit-status">
+          <AppSelect
+            id="requirement-edit-status"
+            v-model="form.status"
+            :options="statusOptions"
+          />
+        </AppField>
         <AppField label="负责人">
           <AppSelect
             v-model="form.ownerId"
