@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "chunsun"
-version = "0.9.25"
+version = "0.9.26"
 dependencies = [
  "aes-gcm",
  "anyhow",

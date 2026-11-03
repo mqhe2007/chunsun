@@ -64,6 +64,7 @@ const previewOpen = ref(false);
 const form = ref({
   description: "",
   ownerId: "" as string,
+  status: "pending",
 });
 
 const projectId = computed(
@@ -71,6 +72,10 @@ const projectId = computed(
 );
 const requirementId = computed(
   () => (route.params as Record<string, string>).requirementId ?? "",
+);
+
+const statusOptions = Object.entries(REQUIREMENT_STATUS_LABEL).map(
+  ([value, label]) => ({ label, value }),
 );
 
 const ownerOptions = computed(() =>
@@ -94,7 +99,7 @@ function statusBadgeClass(status: string) {
   return "badge-ghost";
 }
 
-function canMutate(row: Requirement): boolean {
+function canDelete(row: Requirement): boolean {
   return row.status === "pending";
 }
 
@@ -151,10 +156,11 @@ async function fetchMembers() {
 
 function openEdit() {
   const row = requirement.value;
-  if (!row || !canMutate(row)) return;
+  if (!row) return;
   form.value = {
     description: row.description,
     ownerId: row.ownerId ?? "",
+    status: row.status,
   };
   showForm.value = true;
 }
@@ -181,6 +187,7 @@ async function saveRequirement() {
     }>(`/projects/${projectId.value}/requirements/${row.id}`, {
       description: form.value.description.trim(),
       ownerId: form.value.ownerId || null,
+      ...(form.value.status !== row.status ? { status: form.value.status } : {}),
     });
     if (!data.success) {
       toast.add({
@@ -212,7 +219,7 @@ async function saveRequirement() {
 
 async function confirmDelete() {
   const row = requirement.value;
-  if (!row || !canMutate(row)) return;
+  if (!row || !canDelete(row)) return;
   const ok = await confirm({
     title: "删除需求",
     message: `确定删除需求「${row.id}」？此操作不可撤回。`,
@@ -274,12 +281,13 @@ onMounted(async () => {
         </span>
       </div>
     </template>
-    <template v-if="requirement && canMutate(requirement)" #actions>
+    <template v-if="requirement" #actions>
       <button type="button" class="btn btn-ghost" @click="openEdit">
         <Pencil :size="14" aria-hidden="true" />
         编辑
       </button>
       <button
+        v-if="canDelete(requirement)"
         type="button"
         class="btn btn-ghost btn-error"
         @click="confirmDelete"
@@ -389,6 +397,13 @@ onMounted(async () => {
 
     <AppDrawer v-model="showForm" title="编辑需求">
       <div class="form-grid">
+        <AppField label="状态" html-for="requirement-detail-edit-status">
+          <AppSelect
+            id="requirement-detail-edit-status"
+            v-model="form.status"
+            :options="statusOptions"
+          />
+        </AppField>
         <AppField label="负责人">
           <AppSelect
             v-model="form.ownerId"
